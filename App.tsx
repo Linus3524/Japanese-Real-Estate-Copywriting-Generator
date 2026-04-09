@@ -597,10 +597,12 @@ const App = () => {
                       <h4 className="text-xs font-bold text-indigo-900 mb-3 flex items-center gap-2"><Pencil className="w-3 h-3" /> AI 優化調整</h4>
                       <div className="flex flex-wrap gap-2 mb-3">
                         {[
-                          { label: "更熱情一點 🔥", prompt: "Make it more enthusiastic." },
-                          { label: "更專業穩重 👔", prompt: "Make it more formal and professional." },
-                          { label: "強調翻新細節 ✨", prompt: "Emphasize renovation details and like-new condition." },
-                          { label: "適合投資置產 📈", prompt: "Focus on investment potential and location value." }
+                          { label: "熱情推薦 🔥", prompt: "把整體語氣改得更有活力、更吸引人，多用感嘆詞和強調語句，但保持原有格式與結構不變，輸出繁體中文。" },
+                          { label: "專業穩重 👔", prompt: "把語氣改得更正式、專業且有說服力，適合商務客或投資型買家，保持原有格式不變，輸出繁體中文。" },
+                          { label: "交通生活機能 🚃", prompt: "強調交通便利性、附近生活機能（超市、便利商店、餐廳等），適合重視通勤的上班族或留學生，保持格式不變，輸出繁體中文。" },
+                          { label: "投資置產 📈", prompt: "強調地點增值潛力、租金收益率、區域發展前景，用數字和地段優勢吸引投資型買家，保持格式不變，輸出繁體中文。" },
+                          { label: "留學打工度假 🎒", prompt: "語氣輕鬆親切，強調海外審查通過率高、入住手續簡便、附近生活便利，針對台灣留學生和打工度假族群，保持格式不變，輸出繁體中文。" },
+                          { label: "精簡版 ✂️", prompt: "把文案濃縮為精簡版本，去掉冗長說明，只保留最關鍵的資訊和賣點，適合在限制字數的平台發文，輸出繁體中文。" }
                         ].map((opt) => (
                           <button key={opt.label} onClick={() => handleRewrite(opt.prompt)} disabled={isRewriting} className="px-3 py-1.5 text-xs bg-indigo-50 text-indigo-700 rounded-md border border-indigo-100 hover:bg-indigo-100 transition-colors">{opt.label}</button>
                         ))}

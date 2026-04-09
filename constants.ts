@@ -1,5 +1,5 @@
 
-import React from 'react';
+import { TerminologyItem, HashtagSet } from './types';
 
 export const INITIAL_PROPERTY_DATA = {
   station: "",
@@ -22,15 +22,39 @@ export const INITIAL_PROPERTY_DATA = {
   features: "",
 };
 
-export const PLACEHOLDER_IMAGE = "https://images.unsplash.com/photo-1560518883-ce09059eeffa?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80";
+export const DEFAULT_TERMINOLOGY: TerminologyItem[] = [
+  { id: 't1',  japanese: '専有面積',                         taiwanese: '專有面積 (室內)' },
+  { id: 't2',  japanese: 'バルコニー面積',                   taiwanese: '陽台面積' },
+  { id: 't3',  japanese: '管理費',                           taiwanese: '管理費' },
+  { id: 't4',  japanese: '修繕積立金',                       taiwanese: '修繕積立金' },
+  { id: 't5',  japanese: 'リフォーム / リノベーション',      taiwanese: '室內翻新 / 全室裝修' },
+  { id: 't6',  japanese: '引渡時期',                         taiwanese: '引渡 / 入居時間' },
+  { id: 't7',  japanese: '所有権',                           taiwanese: '所有權' },
+  { id: 't8',  japanese: '構造',                             taiwanese: '結構 (如 RC造)' },
+  { id: 't9',  japanese: 'オートロック',                     taiwanese: '門禁自動鎖' },
+  { id: 't10', japanese: '溫水洗浄便座 / ウォシュレット',   taiwanese: '免治馬桶' },
+  { id: 't11', japanese: '浴室乾燥機 / 浴室換気乾燥機',     taiwanese: '浴室暖風乾燥機' },
+  { id: 't12', japanese: 'システムキッチン',                 taiwanese: '系統廚具' },
+  { id: 't13', japanese: '宅配ボックス',                     taiwanese: '宅配箱' },
+  { id: 't14', japanese: '追焚機能',                         taiwanese: '自動加熱浴缸' },
+  { id: 't15', japanese: 'モニター付きインターホン',         taiwanese: '螢幕對講機' },
+  { id: 't16', japanese: '床暖房',                           taiwanese: '地暖系統' },
+  { id: 't17', japanese: '洗面台 (獨立)',                    taiwanese: '獨立洗臉台' },
+  { id: 't18', japanese: '防犯カメラ',                       taiwanese: '24H監視系統' },
+  { id: 't19', japanese: 'エレベーター',                     taiwanese: '電梯' },
+  { id: 't20', japanese: '駐車場',                           taiwanese: '停車位' },
+  { id: 't21', japanese: 'ペット可',                         taiwanese: '可養寵物' },
+  { id: 't22', japanese: '2人入居可',                        taiwanese: '可雙人入住' },
+  { id: 't23', japanese: '築浅',                             taiwanese: '屋齡新' },
+  { id: 't24', japanese: '角部屋',                           taiwanese: '邊間' },
+  { id: 't25', japanese: '南向き',                           taiwanese: '南向採光' },
+  { id: 't26', japanese: '室内洗濯機置場',                   taiwanese: '室內洗衣機放置處' },
+  { id: 't27', japanese: '収納',                             taiwanese: '收納空間' },
+  { id: 't28', japanese: 'クローゼット',                     taiwanese: '衣櫃' },
+  { id: 't29', japanese: 'フローリング',                     taiwanese: '木質地板' },
+];
 
-export const ASPECT_RATIO_STYLES: Record<string, React.CSSProperties> = {
-  '1:1': { aspectRatio: '1 / 1' },
-  '4:5': { aspectRatio: '4 / 5' },
-  '16:9': { aspectRatio: '16 / 9' },
-  '3:4': { aspectRatio: '3 / 4' },
-  '4:3': { aspectRatio: '4 / 3' },
-  '9:16': { aspectRatio: '9 / 16' },
-  '5:4': { aspectRatio: '5 / 4' },
-  'A4': { aspectRatio: '210 / 297' }, // Standard A4 ratio
+export const DEFAULT_HASHTAGS: HashtagSet = {
+  rental: '#日本租房找Linus #Linus住好日 #東京租房 #東京留學 #日本找房 #東京物件 #海外審查OK #日本打工度假 #日本生活',
+  sale: '#東京買房 #日本置產 #東京不動產 #Linus日本房產 #投資日本 #日本房仲 #日本置產一條龍 #東京公寓',
 };

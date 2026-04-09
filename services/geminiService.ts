@@ -1,45 +1,30 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { ListingMode, PropertyData } from "../types";
+import { ListingMode, PropertyData, TerminologyItem, HashtagSet } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const TERMINOLOGY_GUIDE = `
+const buildTerminologyGuide = (terminology: TerminologyItem[]): string => {
+  const mappings = terminology.map(t => `- ${t.japanese} -> ${t.taiwanese}`).join('\n');
+  return `
 CRITICAL TAIWANESE TERMINOLOGY MAPPING:
-- 専有面積 -> 專有面積 (室內)
-- バルコニー面積 -> 陽台面積
-- 管理費 -> 管理費
-- 修繕積立金 -> 修繕積立金
-- リフォーム / リノベーション -> 室內翻新 / 全室裝修
-- 引渡時期 -> 引渡 / 入居時間
-- 所有権 -> 所有權
-- 構造 -> 結構 (如 RC造)
-- オートロック -> 智慧門禁自動鎖 (Auto-lock)
-- 溫水洗浄便座 / ウォシュレット -> 免治馬桶
-- 浴室乾燥機 / 浴室換気乾燥機 -> 浴室暖風乾燥機
-- システムキッチン -> 系統廚具
-- 宅配ボックス -> 雲端宅配收納櫃
-- 追焚機能 -> 自動加熱浴缸 (追焚機能)
-- モニター付きインターホン -> 螢幕對講機
-- 床暖房 -> 地暖系統
-- 獨立洗面台 -> 獨立洗臉台
-- 防犯カメラ -> 24H監視系統
-- エレベーター -> 電梯
+${mappings}
 
 TRANSPORTATION EXTRACTION:
 - MUST extract ALL rail lines and stations mentioned.
 - Format: "{Line1}「{Station1}」站、{Line2}「{Station2}」站".
 `;
+};
 
 const RENTAL_TEMPLATE = `
 【{Area} ❀ {Station} 徒歩{Min}分 {Target_Audience} 海外審查OK】
 💰 租金：{Price} (管理費 {ManagementFee})
 ✨ 禮金 {KeyMoney} ／ 押金 {Deposit}
 -
-🚶‍♂️ 交通方便 
+🚶‍♂️ 交通方便
 🚃 {Line_Station_Combined} 徒歩{Min}分
 -
-🏠 房屋亮點 
+🏠 房屋亮點
 🏢 {Floor}階／{Layout}／{Size}㎡／{Structure}
 📅 入居日期：{MoveInDate}
 {Features_List}
@@ -89,31 +74,34 @@ Wechat : linus352410
 
 export const generateListingText = async (
   data: PropertyData,
-  mode: ListingMode
+  mode: ListingMode,
+  terminology: TerminologyItem[],
+  hashtags: HashtagSet
 ): Promise<string> => {
   const modelName = "gemini-3.1-flash-lite-preview";
   const templateToUse = mode === ListingMode.RENTAL ? RENTAL_TEMPLATE : SALE_TEMPLATE;
+  const terminologyGuide = buildTerminologyGuide(terminology);
 
-  const rentalHashtags = `#日本租房找Linus #Linus住好日 #東京租房 #東京留學 #日本找房 #東京物件 #海外審查OK #日本打工度假 #日本生活`;
-  const saleHashtags = `#東京買房 #日本置產 #東京不動產 #Linus日本房產 #投資日本 #日本房仲 #日本置產一條龍 #東京公寓 #${data.station}房產`;
+  const rentalHashtags = hashtags.rental;
+  const saleHashtags = `${hashtags.sale} #${data.station}房產`;
 
   const prompt = `
-    You are Linus, a Taiwanese Real Estate Agent in Tokyo. 
+    You are Linus, a Taiwanese Real Estate Agent in Tokyo.
     Task: Populate the ${mode} template using provided data.
-    
+
     Data: ${JSON.stringify(data)}
 
     Instructions:
-    1. Use Taiwanese real estate terms (e.g., 免治馬桶, 浴室暖風乾燥機).
+    1. Use Taiwanese real estate terms from the terminology guide below.
     2. For "Line_Station_Combined", list all stations found in data (e.g., "JR山手線「新宿」站、大江戶線「都廳前」站").
-    3. Mode: ${mode}. 
+    3. Mode: ${mode}.
        - If RENTAL: Use these hashtags: ${rentalHashtags}
        - If SALE: Use these hashtags: ${saleHashtags}
     4. Features: Concatenate with "／".
     5. No markdown bold/italics. Plain text only.
 
-    ${TERMINOLOGY_GUIDE}
-    
+    ${terminologyGuide}
+
     Template:
     ${templateToUse}
   `;
@@ -132,14 +120,16 @@ export const generateListingText = async (
 
 export const rewriteListingText = async (
   currentText: string,
-  instruction: string
+  instruction: string,
+  terminology: TerminologyItem[]
 ): Promise<string> => {
   const modelName = "gemini-3.1-flash-lite-preview";
+  const terminologyGuide = buildTerminologyGuide(terminology);
   const prompt = `
     Rewrite this property listing.
     Instruction: ${instruction}
     Text: ${currentText}
-    ${TERMINOLOGY_GUIDE}
+    ${terminologyGuide}
     Maintain Taiwanese terminology. Plain text only.
   `;
   try {
@@ -155,9 +145,14 @@ export const rewriteListingText = async (
 
 export const extractPropertyData = async (
   files: { mimeType: string; data: string }[],
-  supplementaryText: string = ""
+  supplementaryText: string = "",
+  terminology: TerminologyItem[] = []
 ): Promise<{ data: Partial<PropertyData>, detectedMode?: ListingMode }> => {
   const modelName = "gemini-3.1-flash-lite-preview";
+
+  const terminologyList = terminology.length > 0
+    ? terminology.map(t => `- ${t.japanese} -> ${t.taiwanese}`).join('\n')
+    : '';
 
   const prompt = `
     Analyze real estate documents/images. Extract fields into JSON.
@@ -169,7 +164,7 @@ export const extractPropertyData = async (
 
     TRANSPORTATION (CRITICAL):
     - Scan the entire document for all railway lines and stations.
-    - Put all found transport into 'line' and 'station' fields. 
+    - Put all found transport into 'line' and 'station' fields.
     - Use commas to separate multiple entries.
 
     EQUIPMENT / FEATURES EXTRACTION (CRITICAL):
@@ -177,13 +172,12 @@ export const extractPropertyData = async (
     - DO NOT extract items that are listed but not marked, crossed out, or left blank.
 
     TAIWAN STYLE TERMS:
-    - 溫水洗浄便座 -> 免治馬桶
-    - 浴室乾燥機 -> 浴室暖風乾燥機
-    - 追焚 -> 自動加熱浴缸 (追焚)
-    - 宅配ボックス -> 雲端宅配收納櫃
+    ${terminologyList}
 
     JAPANESE RENTAL LOGIC:
     - '1ヶ月' for Key Money/Deposit should be extracted as '1個月'.
+
+    ${supplementaryText ? `SUPPLEMENTARY INFO: ${supplementaryText}` : ''}
 
     Fields:
     - mode (RENTAL or SALE), address, line, station, walkTime, price, keyMoney, deposit, managementFee, layout, size, balconySize, floor, totalFloors, age, repairFund, moveInDate, renovationDate, features.
@@ -226,16 +220,16 @@ export const extractPropertyData = async (
         }
       }
     });
-    
+
     const text = response.text;
     if (!text) return { data: {} };
-    
+
     const parsed = JSON.parse(text);
     const { mode, ...data } = parsed;
-    
-    return { 
-      data: data as Partial<PropertyData>, 
-      detectedMode: mode === 'SALE' ? ListingMode.SALE : ListingMode.RENTAL 
+
+    return {
+      data: data as Partial<PropertyData>,
+      detectedMode: mode === 'SALE' ? ListingMode.SALE : ListingMode.RENTAL
     };
   } catch (error) {
     console.error("Extraction error:", error);

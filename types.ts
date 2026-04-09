@@ -15,12 +15,30 @@ export interface PropertyData {
   repairFund: string; // Shuuzen-tsumitate-kin (Sale)
   layout: string; // e.g., 1K, 2LDK
   size: string; // m2 (専有面積)
-  balconySize: string; // New: Balcony size m2 (バルコニー面積)
+  balconySize: string; // Balcony size m2
   floor: string; // Current unit floor
-  totalFloors: string; // New: Total floors in building
+  totalFloors: string; // Total floors in building
   age: string; // Building age or year
   address: string;
   moveInDate: string; // Available date / Handover
-  renovationDate: string; // New: Renovation completion date
+  renovationDate: string; // Renovation completion date
   features: string;
+}
+
+export interface TerminologyItem {
+  id: string;
+  japanese: string;
+  taiwanese: string;
+}
+
+export interface SavedListing {
+  id: string;
+  title: string;
+  text: string;
+  mode: ListingMode;
+}
+
+export interface HashtagSet {
+  rental: string;
+  sale: string;
 }

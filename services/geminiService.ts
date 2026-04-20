@@ -78,7 +78,7 @@ export const generateListingText = async (
   terminology: TerminologyItem[],
   hashtags: HashtagSet
 ): Promise<string> => {
-  const modelName = "gemini-3.1-flash-lite-preview";
+  const modelName = "gemini-2.5-flash";
   const templateToUse = mode === ListingMode.RENTAL ? RENTAL_TEMPLATE : SALE_TEMPLATE;
   const terminologyGuide = buildTerminologyGuide(terminology);
 
@@ -123,7 +123,7 @@ export const rewriteListingText = async (
   instruction: string,
   terminology: TerminologyItem[]
 ): Promise<string> => {
-  const modelName = "gemini-3.1-flash-lite-preview";
+  const modelName = "gemini-2.5-flash";
   const terminologyGuide = buildTerminologyGuide(terminology);
   const prompt = `
     Rewrite this property listing.
@@ -148,7 +148,7 @@ export const extractPropertyData = async (
   supplementaryText: string = "",
   terminology: TerminologyItem[] = []
 ): Promise<{ data: Partial<PropertyData>, detectedMode?: ListingMode }> => {
-  const modelName = "gemini-3.1-flash-lite-preview";
+  const modelName = "gemini-2.5-flash";
 
   const terminologyList = terminology.length > 0
     ? terminology.map(t => `- ${t.japanese} -> ${t.taiwanese}`).join('\n')
@@ -233,6 +233,6 @@ export const extractPropertyData = async (
     };
   } catch (error) {
     console.error("Extraction error:", error);
-    return { data: {} };
+    throw error;
   }
 };

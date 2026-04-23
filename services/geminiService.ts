@@ -22,7 +22,7 @@ const RENTAL_TEMPLATE = `
 ✨ 禮金 {KeyMoney} ／ 押金 {Deposit}
 -
 🚶‍♂️ 交通方便
-🚃 {Line_Station_Combined} 徒歩{Min}分
+🚃 {Line_Station_Combined}
 -
 🏠 房屋亮點
 🏢 {Floor}階／{Layout}／{Size}㎡／{Structure}
@@ -47,7 +47,7 @@ const SALE_TEMPLATE = `
 {Renovation_Status_Line}
 ▫︎ {Structure_Type} {Total_Floors_Line} {Floor_Part}
 ▫︎ {Layout} 雙面採光邊間可選
-▫︎ 🚃 {Line_Station_Combined} 徒歩僅 {Min} 分鐘
+▫︎ 🚃 {Line_Station_Combined}
 ▫︎ 📅 引渡時期：{MoveInDate}
 -
 🏠 物件亮點
@@ -93,12 +93,23 @@ export const generateListingText = async (
 
     Instructions:
     1. Use Taiwanese real estate terms from the terminology guide below.
-    2. For "Line_Station_Combined", list all stations found in data (e.g., "JR山手線「新宿」站、大江戶線「都廳前」站").
-    3. Mode: ${mode}.
+    2. For "Line_Station_Combined", list ALL stations with their INDIVIDUAL walk times, one per line, each starting with 🚃.
+       - data.line contains lines (comma-separated), data.station contains stations (comma-separated), data.walkTime contains walk times in minutes (comma-separated, same order as stations).
+       - Match each station with its own walk time.
+       - Format (one station per line, all with 🚃):
+         🚃 JR山手線「新宿」站 徒歩5分
+         🚃 東京メトロ丸ノ内線「赤坂」站 徒歩12分
+       - Each station must have its own 徒歩XX分. Never use one time for all stations.
+    3. For {Station} and {Min} in the header/title, use the station with the SHORTEST walk time.
+    4. Mode: ${mode}.
        - If RENTAL: Use these hashtags: ${rentalHashtags}
        - If SALE: Use these hashtags: ${saleHashtags}
-    4. Features: Concatenate with "／".
-    5. No markdown bold/italics. Plain text only.
+    5. Features: List each feature on its own line, starting with ✅. One feature per line. Do NOT use "／" to join features.
+       Format:
+       ✅ 乾濕分離
+       ✅ 獨立洗臉台
+       ✅ 空調
+    6. No markdown bold/italics. Plain text only.
 
     ${terminologyGuide}
 
@@ -163,9 +174,12 @@ export const extractPropertyData = async (
     - Look for keywords like "賃貸" (Rental), "売買" (Sale), "売マンション" (Sale Condo), "賃貸マンション" (Rental Condo).
 
     TRANSPORTATION (CRITICAL):
-    - Scan the entire document for all railway lines and stations.
-    - Put all found transport into 'line' and 'station' fields.
-    - Use commas to separate multiple entries.
+    - Scan the entire document for all railway lines, stations, and their individual walk times.
+    - Put all found lines into 'line' field (comma-separated).
+    - Put all found station names into 'station' field (comma-separated, same order as lines).
+    - Put each station's walk time (in minutes) into 'walkTime' field (comma-separated, same order as stations).
+    - Example: line="JR山手線,東京メトロ丸ノ内線", station="新宿,赤坂", walkTime="5,12"
+    - NEVER put the same walk time for all stations if they are different.
 
     EQUIPMENT / FEATURES EXTRACTION (CRITICAL):
     - When reading tables or lists of equipment/features, ONLY extract items that are explicitly marked as present (e.g., marked with a circle "⭕️", "○", a checkmark "✓", or filled in).

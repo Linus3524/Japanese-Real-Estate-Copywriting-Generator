@@ -109,7 +109,7 @@ export const generateListingText = async (
        ✅ 乾濕分離
        ✅ 獨立洗臉台
        ✅ 空調
-    6. No markdown bold/italics. Plain text only.
+    6. STRICTLY NO markdown formatting. Never use *, **, __, #, or any markdown symbols anywhere in the output. Plain text and emojis only. The output will be posted to Facebook where markdown does NOT render.
 
     ${terminologyGuide}
 
@@ -141,7 +141,7 @@ export const rewriteListingText = async (
     Instruction: ${instruction}
     Text: ${currentText}
     ${terminologyGuide}
-    Maintain Taiwanese terminology. Plain text only.
+    Maintain Taiwanese terminology. STRICTLY NO markdown formatting. Never use *, **, __, #, or any markdown symbols. Plain text and emojis only.
   `;
   try {
     const response = await ai.models.generateContent({

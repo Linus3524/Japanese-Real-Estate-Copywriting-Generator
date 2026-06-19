@@ -4,6 +4,11 @@ export enum ListingMode {
   SALE = 'SALE',
 }
 
+export enum CopyStyle {
+  CLASSIC = 'CLASSIC',     // 經典條列式（原本的緊湊模板）
+  EDITORIAL = 'EDITORIAL', // 編輯雜誌風（看圖描述、敘事段落）
+}
+
 export interface PropertyData {
   station: string;
   line: string;

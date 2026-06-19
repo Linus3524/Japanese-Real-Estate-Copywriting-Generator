@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { ListingMode, PropertyData, TerminologyItem, HashtagSet } from "../types";
+import { ListingMode, CopyStyle, PropertyData, TerminologyItem, HashtagSet } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -72,22 +72,119 @@ Wechat : linus352410
 {Mode_Specific_Hashtags}
 `;
 
+const EDITORIAL_RENTAL_TEMPLATE = `
+░ {Label}｜{Area} 徒歩{Min}分 ░
+
+{Opening_Narrative}
+
+━━━━━━━━━━━━━━
+
+📍 {Area_Ward}
+
+💰 租金｜{Price}
+💰 管理費｜{ManagementFee}
+
+🏠 {Layout}｜{Size}㎡
+🏢 {Structure} {TotalFloors}層樓｜{Floor}戶別
+📅 {MoveInDate}
+
+━━━━━━━━━━━━━━
+
+✔ 禮金 {KeyMoney}
+✔ 押金 {Deposit}
+✔ 海外審查可相談
+✔ 留學生可相談
+✔ 打工度假簽證可相談
+
+━━━━━━━━━━━━━━
+
+設備完善
+
+{Features_List}
+
+━━━━━━━━━━━━━━
+
+{Closing_Narrative}
+
+━━━━━━━━━━━━━━
+
+🇯🇵 在日台灣人仲介協助
+
+✔ 中文全程溝通
+✔ 海外審查協助
+✔ 留學生・打工度假簽證租房對應
+✔ 水電瓦斯開通協助
+
+📲 Line：linus0922
+📲 WeChat：linus352410
+
+{Mode_Specific_Hashtags}
+`;
+
 export const generateListingText = async (
   data: PropertyData,
   mode: ListingMode,
   terminology: TerminologyItem[],
-  hashtags: HashtagSet
+  hashtags: HashtagSet,
+  style: CopyStyle = CopyStyle.CLASSIC,
+  files: { mimeType: string; data: string }[] = []
 ): Promise<string> => {
   const modelName = "gemini-2.5-flash";
-  const templateToUse = mode === ListingMode.RENTAL ? RENTAL_TEMPLATE : SALE_TEMPLATE;
   const terminologyGuide = buildTerminologyGuide(terminology);
 
   const rentalHashtags = hashtags.rental;
   const saleHashtags = `${hashtags.sale} #${data.station}房產`;
 
-  const prompt = `
+  // 編輯雜誌風只用於租賃；其餘維持經典條列式
+  const useEditorial = style === CopyStyle.EDITORIAL && mode === ListingMode.RENTAL;
+  const hasImages = files.length > 0;
+
+  const visionNote = hasImages
+    ? `IMPORTANT — PROPERTY PHOTOS ARE ATTACHED. Look carefully at the attached images and describe what you ACTUALLY SEE: interior materials (e.g. 清水模/exposed concrete, 木地板/wood flooring), natural light and window size, ceiling height, layout openness, fittings, balcony, and the overall atmosphere. Weave these REAL observed details into the narrative. NEVER invent visual features that are not visible in the photos or stated in the data.`
+    : `No photos are attached. Write the narrative only from the data and do NOT fabricate visual details (materials, light, view) you cannot confirm.`;
+
+  let prompt: string;
+
+  if (useEditorial) {
+    prompt = `
+    You are Linus, a Taiwanese real estate agent in Tokyo, writing an upscale, editorial magazine-style Facebook RENTAL post in TRADITIONAL CHINESE (Taiwan style).
+
+    ${visionNote}
+
+    Data: ${JSON.stringify(data)}
+
+    Fill the template below EXACTLY — keep every ░, ━ divider, emoji and the contact block unchanged.
+
+    Detailed instructions:
+    1. BANNER (first line) → ░ {Label}｜{Area} 徒歩{Min}分 ░
+       - {Label}: a short UPPERCASE English tag YOU choose to fit this property's real character (judge from the photos + data), e.g. DESIGNER'S ROOM, BRIGHT STUDIO, MINIMAL FLAT, CORNER RESIDENCE, COZY HIDEAWAY, SKY VIEW SUITE. Choose honestly — only use DESIGNER'S ROOM for genuinely design-led interiors.
+       - {Area}: the neighbourhood name (derive from the nearest station or the address).
+       - {Min}: the SHORTEST walk time among the stations.
+    2. {Opening_Narrative}: keep it SHORT and minimal — 2 brief paragraphs only (blank line between), BEFORE the first divider. Each paragraph 1–2 short sentences. Do NOT write long flowing intros.
+       - Para 1: nearest station + walk minutes, plus one phrase on the home's design / light / atmosphere you SEE in the photos.
+       - Para 2: one line on transport — name the stations with their own walk times and one or two major hubs (新宿 / 澀谷 / 下北澤 etc.) that are easy to reach.
+       - data.line / data.station / data.walkTime are comma-separated, same order. Match each station to its own walk time. Never reuse one time for all.
+       - Total opening should feel light and editorial, not a paragraph-heavy description.
+    3. INFO BLOCK: {Area_Ward} = area or ward; {Price} = rent; {ManagementFee} = management fee; {Layout}, {Size}, {Structure}, {TotalFloors}, {Floor}, {MoveInDate} from data. For monetary values that are bare numbers, show thousands separators and append 円 (e.g. 102,000円).
+    4. TERMS: {KeyMoney} = 禮金 value, {Deposit} = 押金 value. Keep the three 可相談 lines unchanged.
+    5. {Features_List}: each feature on its own line starting with ✓ (one per line, Taiwanese terms, do NOT join with ／).
+    6. {Closing_Narrative}: 1–2 short paragraphs about the neighbourhood lifestyle and who this home suits — warm and tasteful, not hard-sell.
+    7. Keep the 🇯🇵 agent block and 📲 contacts EXACTLY as written.
+    8. {Mode_Specific_Hashtags}: end the post with: ${rentalHashtags}
+    9. STRICTLY NO markdown. Never use *, **, __, or heading #. The only allowed # are the hashtags at the very end. Plain text + emojis only (posted to Facebook).
+
+    ${terminologyGuide}
+
+    Template:
+    ${EDITORIAL_RENTAL_TEMPLATE}
+    `;
+  } else {
+    const templateToUse = mode === ListingMode.RENTAL ? RENTAL_TEMPLATE : SALE_TEMPLATE;
+    prompt = `
     You are Linus, a Taiwanese Real Estate Agent in Tokyo.
     Task: Populate the ${mode} template using provided data.
+
+    ${hasImages ? visionNote + '\n    Use what you see in the photos to enrich the 房屋亮點 / features with REAL observed details. Do not invent.' : ''}
 
     Data: ${JSON.stringify(data)}
 
@@ -116,11 +213,16 @@ export const generateListingText = async (
     Template:
     ${templateToUse}
   `;
+  }
+
+  const contents = hasImages
+    ? { parts: [...files.map(f => ({ inlineData: f })), { text: prompt }] }
+    : prompt;
 
   try {
     const response = await ai.models.generateContent({
       model: modelName,
-      contents: prompt,
+      contents,
     });
     return response.text || "Error generating text.";
   } catch (error) {

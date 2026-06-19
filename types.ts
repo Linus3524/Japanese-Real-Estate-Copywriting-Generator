@@ -7,6 +7,7 @@ export enum ListingMode {
 export enum CopyStyle {
   CLASSIC = 'CLASSIC',     // 經典條列式（原本的緊湊模板）
   EDITORIAL = 'EDITORIAL', // 編輯雜誌風（看圖描述、敘事段落）
+  SHORT = 'SHORT',         // 限動短版（IG/Threads 精簡）
 }
 
 export interface PropertyData {

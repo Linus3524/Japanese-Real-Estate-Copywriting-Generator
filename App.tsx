@@ -13,7 +13,7 @@ import {
   DEFAULT_TERMINOLOGY,
   DEFAULT_HASHTAGS
 } from './constants';
-import { generateListingText, extractPropertyData, rewriteListingText } from './services/geminiService';
+import { generateListingText, extractPropertyData, rewriteListingText, translateListingText, TranslateLang } from './services/geminiService';
 import {
   Building2,
   Sparkles,
@@ -60,6 +60,21 @@ const loadLS = <T,>(key: string, fallback: T): T => {
   }
 };
 
+// 多版本生成：每版的差異化方向
+const VARIATION_HINTS = [
+  "Lead with lifestyle, mood and atmosphere; warm and emotive tone.",
+  "Lead with hard specs and value — price, size, transport convenience; efficient, persuasive tone.",
+  "Lead with the neighbourhood and location appeal; friendly, local insider tone.",
+];
+
+// 分段重寫：只改文案的某一段，其餘保持不變
+const SECTION_PRESETS = [
+  { label: "✍️ 只改開頭", prompt: "只重寫開頭的標題與開場敘述，讓它更吸引人，其餘所有內容（價格、設備、聯絡方式、hashtag）原封不動，輸出繁體中文。" },
+  { label: "🛠 只改設備說明", prompt: "只重寫設備／房屋亮點那一段，讓描述更生動具體，其餘所有內容原封不動，輸出繁體中文。" },
+  { label: "🏘 只改結尾", prompt: "只重寫結尾的街區生活／推薦段落，讓它更溫暖有感，其餘所有內容原封不動，輸出繁體中文。" },
+  { label: "🎣 只換標題", prompt: "只重寫第一行的標題／開場 hook，給一個更搶眼的版本，其餘所有內容原封不動，輸出繁體中文。" },
+];
+
 const REWRITE_PRESETS = [
   { label: "🔥 熱情推薦", prompt: "把整體語氣改得更有活力、更吸引人，多用感嘆詞和強調語句，但保持原有格式與結構不變，輸出繁體中文。" },
   { label: "👔 專業穩重", prompt: "把語氣改得更正式、專業且有說服力，適合商務客或投資型買家，保持原有格式不變，輸出繁體中文。" },
@@ -86,6 +101,9 @@ const App = () => {
   const [copied, setCopied] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
   const [customRewritePrompt, setCustomRewritePrompt] = useState("");
+  const [isTranslating, setIsTranslating] = useState<TranslateLang | null>(null);
+  const [generateCount, setGenerateCount] = useState<number>(1);
+  const [variants, setVariants] = useState<string[]>([]);
 
   // History State
   const [textHistory, setTextHistory] = useState<string[]>([]);
@@ -253,19 +271,45 @@ const App = () => {
   // --- Handlers: Generation & Rewrite ---
   const handleGenerateText = async () => {
     setIsGenerating(true);
+    setVariants([]);
     const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
-    const text = await generateListingText(propertyData, mode, terminology, hashtags, copyStyle, imageParts);
-    pushToHistory(text, true);
+    if (generateCount > 1) {
+      const results = await Promise.all(
+        Array.from({ length: generateCount }, (_, i) =>
+          generateListingText(propertyData, mode, terminology, hashtags, copyStyle, imageParts, VARIATION_HINTS[i] || "")
+        )
+      );
+      setVariants(results);
+    } else {
+      const text = await generateListingText(propertyData, mode, terminology, hashtags, copyStyle, imageParts);
+      pushToHistory(text, true);
+    }
     setIsGenerating(false);
+  };
+
+  const selectVariant = (text: string) => {
+    setVariants([]);
+    pushToHistory(text, true);
   };
 
   const handleRewrite = async (instruction: string) => {
     if (!generatedText || !instruction.trim()) return;
     setIsRewriting(true);
-    const newText = await rewriteListingText(generatedText, instruction, terminology);
+    const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
+    const newText = await rewriteListingText(generatedText, instruction, terminology, imageParts);
     pushToHistory(newText, false);
     setIsRewriting(false);
     setCustomRewritePrompt("");
+  };
+
+  const handleTranslate = async (lang: TranslateLang) => {
+    if (!generatedText) return;
+    setIsTranslating(lang);
+    setIsRewriting(true);
+    const newText = await translateListingText(generatedText, lang);
+    pushToHistory(newText, false);
+    setIsRewriting(false);
+    setIsTranslating(null);
   };
 
   const copyToClipboard = () => {
@@ -280,6 +324,16 @@ const App = () => {
 
   const isRental = mode === ListingMode.RENTAL;
   const accentColor = isRental ? '#5856d6' : '#ff2d55';
+  const styleOptions: { v: CopyStyle; label: string }[] = isRental
+    ? [
+        { v: CopyStyle.CLASSIC, label: '經典條列式' },
+        { v: CopyStyle.EDITORIAL, label: '編輯雜誌風 ✨' },
+        { v: CopyStyle.SHORT, label: '限動短版' },
+      ]
+    : [
+        { v: CopyStyle.CLASSIC, label: '經典條列式' },
+        { v: CopyStyle.SHORT, label: '限動短版' },
+      ];
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -300,13 +354,13 @@ const App = () => {
           ></div>
           <button
             className={`segment-btn w-1/2 text-center ${isRental ? 'active' : ''}`}
-            onClick={() => { setMode(ListingMode.RENTAL); setPropertyData(INITIAL_PROPERTY_DATA); }}
+            onClick={() => { setMode(ListingMode.RENTAL); setPropertyData(INITIAL_PROPERTY_DATA); setVariants([]); }}
           >
             租賃
           </button>
           <button
             className={`segment-btn w-1/2 text-center ${!isRental ? 'active' : ''}`}
-            onClick={() => { setMode(ListingMode.SALE); setPropertyData(INITIAL_PROPERTY_DATA); }}
+            onClick={() => { setMode(ListingMode.SALE); setPropertyData(INITIAL_PROPERTY_DATA); setCopyStyle(CopyStyle.CLASSIC); setVariants([]); }}
           >
             買賣
           </button>
@@ -539,41 +593,51 @@ const App = () => {
                 </div>
               </div>
 
-              {/* 文案風格 + 生成 */}
+              {/* 文案風格 + 版本數 + 生成 */}
               <div className="mt-8 pt-6 border-t border-gray-200/50">
-                {isRental && (
-                  <>
-                    <div className="flex items-center justify-between mb-4">
-                      <span className="text-[13px] font-semibold text-gray-700">文案風格</span>
-                      {copyStyle === CopyStyle.EDITORIAL && (
-                        <span className="text-[11px] text-blue-500 flex items-center gap-1">
-                          <Sparkles className="w-3 h-3" /> 會參考上傳照片描述室內
-                        </span>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-[13px] font-semibold text-gray-700">文案風格</span>
+                  {copyStyle === CopyStyle.EDITORIAL && (
+                    <span className="text-[11px] text-blue-500 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" /> 會參考上傳照片描述室內
+                    </span>
+                  )}
+                </div>
+                <div className={`grid ${isRental ? 'grid-cols-3' : 'grid-cols-2'} gap-2 mb-5`}>
+                  {styleOptions.map((opt) => (
+                    <button
+                      key={opt.v}
+                      onClick={() => setCopyStyle(opt.v)}
+                      className={`text-[12px] py-2 rounded-lg font-medium border transition ${copyStyle === opt.v ? 'bg-blue-500 text-white border-blue-600/20 shadow-sm' : 'bg-white/60 text-gray-700 hover:bg-white border-gray-200'}`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between mb-6">
+                  <span className="text-[13px] font-semibold text-gray-700">生成版本數</span>
+                  <div className="segment-control">
+                    <div className="segment-indicator" style={{ width: 'calc(33.333% - 2px)', transform: `translateX(${(generateCount - 1) * 100}%)` }}></div>
+                    {[1, 2, 3].map((n) => (
                       <button
-                        onClick={() => setCopyStyle(CopyStyle.CLASSIC)}
-                        className={`text-[12px] py-2 rounded-lg font-medium border transition ${copyStyle === CopyStyle.CLASSIC ? 'bg-blue-500 text-white border-blue-600/20 shadow-sm' : 'bg-white/60 text-gray-700 hover:bg-white border-gray-200'}`}
+                        key={n}
+                        onClick={() => setGenerateCount(n)}
+                        className={`segment-btn text-center ${generateCount === n ? 'active' : ''}`}
+                        style={{ width: '3rem' }}
                       >
-                        經典條列式
+                        {n === 1 ? '1 版' : `${n} 版`}
                       </button>
-                      <button
-                        onClick={() => setCopyStyle(CopyStyle.EDITORIAL)}
-                        className={`text-[12px] py-2 rounded-lg font-medium border transition ${copyStyle === CopyStyle.EDITORIAL ? 'bg-blue-500 text-white border-blue-600/20 shadow-sm' : 'bg-white/60 text-gray-700 hover:bg-white border-gray-200'}`}
-                      >
-                        編輯雜誌風 ✨
-                      </button>
-                    </div>
-                  </>
-                )}
+                    ))}
+                  </div>
+                </div>
 
                 <button
                   onClick={handleGenerateText}
                   disabled={isGenerating}
                   className="btn-primary w-full py-3.5 text-[15px]"
                 >
-                  {isGenerating ? <><RefreshCcw className="w-[18px] h-[18px] animate-spin" /> AI 正在生成專業文案...</> : <><Wand2 className="w-[18px] h-[18px]" /> 生成{isRental ? '租賃' : '買賣'}社群文案</>}
+                  {isGenerating ? <><RefreshCcw className="w-[18px] h-[18px] animate-spin" /> AI 正在生成{generateCount > 1 ? ` ${generateCount} 個版本` : '專業文案'}...</> : <><Wand2 className="w-[18px] h-[18px]" /> 生成{isRental ? '租賃' : '買賣'}社群文案{generateCount > 1 ? `（${generateCount} 版）` : ''}</>}
                 </button>
               </div>
             </div>
@@ -634,7 +698,28 @@ const App = () => {
                   <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
                 </div>
               )}
-              {generatedText ? (
+              {variants.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] font-semibold text-gray-700">挑選一個版本（共 {variants.length} 版）</span>
+                    <button onClick={() => setVariants([])} className="text-[11px] text-gray-400 hover:text-gray-600">取消</button>
+                  </div>
+                  {variants.map((v, i) => (
+                    <div key={i} className="bg-white/60 border border-white/60 rounded-xl p-4 shadow-sm">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[12px] font-bold text-blue-600">版本 {String.fromCharCode(65 + i)}</span>
+                        <button
+                          onClick={() => selectVariant(v)}
+                          className="text-[11px] font-semibold bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded-lg transition"
+                        >
+                          使用這版
+                        </button>
+                      </div>
+                      <div className="text-[12px] leading-relaxed text-[#444] whitespace-pre-wrap max-h-48 overflow-y-auto no-scrollbar">{v}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : generatedText ? (
                 <textarea
                   value={generatedText}
                   onChange={(e) => updateCurrentHistory(e.target.value)}
@@ -642,8 +727,11 @@ const App = () => {
                 />
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 py-20">
-                  <Wand2 className="w-8 h-8 mb-3 opacity-40" />
-                  <span className="text-sm italic">準備生成... 請填寫左側資訊後點擊生成</span>
+                  {isGenerating ? (
+                    <><Loader2 className="w-8 h-8 mb-3 animate-spin text-blue-400" /><span className="text-sm italic">AI 正在生成{generateCount > 1 ? ` ${generateCount} 個版本` : ''}...</span></>
+                  ) : (
+                    <><Wand2 className="w-8 h-8 mb-3 opacity-40" /><span className="text-sm italic">準備生成... 請填寫左側資訊後點擊生成</span></>
+                  )}
                 </div>
               )}
             </div>
@@ -655,9 +743,42 @@ const App = () => {
             {/* AI Copilot 潤飾區 */}
             {generatedText && (
               <div className="p-4 border-t border-white/60 bg-white/40 flex-shrink-0">
-                <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar">
+                <div className="flex items-center gap-2 mb-2 overflow-x-auto no-scrollbar">
                   <span className="text-[10px] font-bold text-gray-400 uppercase mr-1 flex-shrink-0">AI 微調建議</span>
                   {REWRITE_PRESETS.map((opt) => (
+                    <button
+                      key={opt.label}
+                      onClick={() => handleRewrite(opt.prompt)}
+                      disabled={isRewriting}
+                      className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase mr-1 flex-shrink-0">多語輸出</span>
+                  <button
+                    onClick={() => handleTranslate('JA')}
+                    disabled={isRewriting}
+                    className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
+                  >
+                    {isTranslating === 'JA' ? <Loader2 className="w-3 h-3 animate-spin" /> : '🇯🇵'} 日文版
+                  </button>
+                  <button
+                    onClick={() => handleTranslate('EN')}
+                    disabled={isRewriting}
+                    className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
+                  >
+                    {isTranslating === 'EN' ? <Loader2 className="w-3 h-3 animate-spin" /> : '🇬🇧'} 英文版
+                  </button>
+                  <span className="flex-shrink-0 text-[10px] text-gray-400">（翻譯前可先「儲存」中文版）</span>
+                </div>
+
+                <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase mr-1 flex-shrink-0">分段重寫</span>
+                  {SECTION_PRESETS.map((opt) => (
                     <button
                       key={opt.label}
                       onClick={() => handleRewrite(opt.prompt)}

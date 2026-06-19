@@ -127,7 +127,8 @@ export const generateListingText = async (
   terminology: TerminologyItem[],
   hashtags: HashtagSet,
   style: CopyStyle = CopyStyle.CLASSIC,
-  files: { mimeType: string; data: string }[] = []
+  files: { mimeType: string; data: string }[] = [],
+  variationHint: string = ""
 ): Promise<string> => {
   const modelName = "gemini-2.5-flash";
   const terminologyGuide = buildTerminologyGuide(terminology);
@@ -135,8 +136,9 @@ export const generateListingText = async (
   const rentalHashtags = hashtags.rental;
   const saleHashtags = `${hashtags.sale} #${data.station}房產`;
 
-  // 編輯雜誌風只用於租賃；其餘維持經典條列式
+  // 編輯雜誌風只用於租賃；限動短版兩種模式皆可；其餘維持經典條列式
   const useEditorial = style === CopyStyle.EDITORIAL && mode === ListingMode.RENTAL;
+  const useShort = style === CopyStyle.SHORT;
   const hasImages = files.length > 0;
 
   const visionNote = hasImages
@@ -145,7 +147,27 @@ export const generateListingText = async (
 
   let prompt: string;
 
-  if (useEditorial) {
+  if (useShort) {
+    const shortHashtags = mode === ListingMode.RENTAL ? rentalHashtags : saleHashtags;
+    prompt = `
+    You are Linus, a Taiwanese real estate agent in Tokyo, writing a SHORT, punchy ${mode} post for Instagram Stories / Threads in TRADITIONAL CHINESE (Taiwan style).
+
+    ${hasImages ? visionNote : ''}
+
+    Data: ${JSON.stringify(data)}
+
+    Write a COMPACT post (about 6–10 short lines total). Keep it scannable and high-impact:
+    1. Line 1: a punchy hook headline with 1–2 emojis (area + nearest station + shortest walk time, e.g. 「✨ 高圓寺站徒步5分 ｜ 設計感 1DK」).
+    2. 2–4 short lines for the strongest selling points (price + management fee, layout + size, and the 1–2 best features you see in the photos / data). Each line starts with a relevant emoji. One point per line.
+    3. ${mode === ListingMode.RENTAL ? 'One line on terms (禮金/押金) and 海外審查 if relevant.' : 'One line on the headline price and handover timing.'}
+    4. One short call-to-action line + contacts: 📲 Line：linus0922 ／ WeChat：linus352410
+    5. End with 5–8 of the most relevant hashtags chosen from: ${shortHashtags}
+
+    Rules: be concise — NO long paragraphs, NO big divider blocks. Use Taiwanese terminology. For bare-number money values add thousands separators and 円. STRICTLY NO markdown (no *, **, __, heading #); the only # allowed are the hashtags at the end. Plain text + emojis only (posted to social media).
+
+    ${terminologyGuide}
+    `;
+  } else if (useEditorial) {
     prompt = `
     You are Linus, a Taiwanese real estate agent in Tokyo, writing an upscale, editorial magazine-style Facebook RENTAL post in TRADITIONAL CHINESE (Taiwan style).
 
@@ -215,6 +237,10 @@ export const generateListingText = async (
   `;
   }
 
+  if (variationHint) {
+    prompt += `\n\n    VARIATION DIRECTION (make this version distinct from other versions): ${variationHint}\n    Keep all the same facts and required structure, but vary the wording, hook angle and emphasis accordingly.`;
+  }
+
   const contents = hasImages
     ? { parts: [...files.map(f => ({ inlineData: f })), { text: prompt }] }
     : prompt;
@@ -234,16 +260,51 @@ export const generateListingText = async (
 export const rewriteListingText = async (
   currentText: string,
   instruction: string,
-  terminology: TerminologyItem[]
+  terminology: TerminologyItem[],
+  files: { mimeType: string; data: string }[] = []
 ): Promise<string> => {
   const modelName = "gemini-2.5-flash";
   const terminologyGuide = buildTerminologyGuide(terminology);
+  const hasImages = files.length > 0;
   const prompt = `
     Rewrite this property listing.
     Instruction: ${instruction}
+    ${hasImages ? 'Property photos are attached — if the instruction asks about the room, interior, materials, light or atmosphere, base your edits on what you ACTUALLY SEE in the photos. Never invent visual details not visible in the photos.' : ''}
     Text: ${currentText}
     ${terminologyGuide}
-    Maintain Taiwanese terminology. STRICTLY NO markdown formatting. Never use *, **, __, #, or any markdown symbols. Plain text and emojis only.
+    Maintain Taiwanese terminology. Keep the overall layout, emojis and structure unless the instruction says otherwise. STRICTLY NO markdown formatting. Never use *, **, __, #(except hashtags), or any markdown symbols. Plain text and emojis only.
+  `;
+  const contents = hasImages
+    ? { parts: [...files.map(f => ({ inlineData: f })), { text: prompt }] }
+    : prompt;
+  try {
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents,
+    });
+    return response.text || currentText;
+  } catch (error) {
+    return currentText;
+  }
+};
+
+export type TranslateLang = 'JA' | 'EN';
+
+export const translateListingText = async (
+  currentText: string,
+  targetLang: TranslateLang
+): Promise<string> => {
+  const modelName = "gemini-2.5-flash";
+  const langName = targetLang === 'JA' ? 'Japanese (natural, native-level Japanese suitable for a Japanese audience)' : 'English (natural, native-level English suitable for an international audience)';
+  const prompt = `
+    Translate the following real-estate social-media post into ${langName}.
+    CRITICAL — keep the EXACT same visual layout: every emoji, every ░/━/✔/✓/📍/💰/🏠 symbol, every divider line and every line break must stay in the same place. Only translate the human-readable words.
+    Translate the hashtags into natural ${targetLang === 'JA' ? 'Japanese' : 'English'} hashtags (keep the # prefix, no spaces inside a tag).
+    Keep contact lines (Line / WeChat IDs) unchanged.
+    Output ONLY the translated post, nothing else. STRICTLY NO markdown symbols (no *, **, __, heading #).
+
+    Post:
+    ${currentText}
   `;
   try {
     const response = await ai.models.generateContent({
@@ -252,6 +313,7 @@ export const rewriteListingText = async (
     });
     return response.text || currentText;
   } catch (error) {
+    console.error(error);
     return currentText;
   }
 };

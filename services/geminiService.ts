@@ -150,20 +150,28 @@ export const generateListingText = async (
   if (useShort) {
     const shortHashtags = mode === ListingMode.RENTAL ? rentalHashtags : saleHashtags;
     prompt = `
-    You are Linus, a Taiwanese real estate agent in Tokyo, writing a SHORT, punchy ${mode} post for Instagram Stories / Threads in TRADITIONAL CHINESE (Taiwan style).
+    You are Linus, a Taiwanese real estate agent in Tokyo, writing a SHORT editorial / magazine-style ${mode} post for THREADS in TRADITIONAL CHINESE (Taiwan style).
 
-    ${hasImages ? visionNote : ''}
+    ${visionNote}
 
     Data: ${JSON.stringify(data)}
 
-    Write a COMPACT post (about 6–10 short lines total). Keep it scannable and high-impact:
-    1. Line 1: a punchy hook headline with 1–2 emojis (area + nearest station + shortest walk time, e.g. 「✨ 高圓寺站徒步5分 ｜ 設計感 1DK」).
-    2. 2–4 short lines for the strongest selling points (price + management fee, layout + size, and the 1–2 best features you see in the photos / data). Each line starts with a relevant emoji. One point per line.
-    3. ${mode === ListingMode.RENTAL ? 'One line on terms (禮金/押金) and 海外審查 if relevant.' : 'One line on the headline price and handover timing.'}
-    4. One short call-to-action line + contacts: 📲 Line：linus0922 ／ WeChat：linus352410
-    5. End with 5–8 of the most relevant hashtags chosen from: ${shortHashtags}
+    This is the magazine "editorial" voice but CONDENSED for Threads — text-forward, tasteful, calm. Think of a short magazine caption, NOT a punchy ad with an emoji on every line. Target length: about 10–16 lines total.
 
-    Rules: be concise — NO long paragraphs, NO big divider blocks. Use Taiwanese terminology. For bare-number money values add thousands separators and 円. STRICTLY NO markdown (no *, **, __, heading #); the only # allowed are the hashtags at the end. Plain text + emojis only (posted to social media).
+    Structure:
+    1. OPENING (the heart of this style): 1–2 short narrative paragraphs (blank line between), describing the home's atmosphere, light, materials and the neighbourhood feel — drawn from the photos if attached, otherwise only from the data. Editorial and evocative but brief: each paragraph 1–2 sentences. Mention the nearest station + its walk time naturally inside the prose. Do NOT start with a loud hook headline.
+    2. A SINGLE thin divider line: ━━━━━━━━━━
+    3. A COMPACT info block — a few clean lines, each starting with one tasteful emoji (not every line needs one):
+       📍 area / ward
+       💰 租金 {price}（管理費 {mgmt}）  ${mode === ListingMode.RENTAL ? '' : '— for SALE use 售價 instead of 租金, and omit management line if not relevant'}
+       🏠 {layout}｜{size}㎡
+       🚃 list each station with its OWN walk time (data.line / data.station / data.walkTime are comma-separated in the same order — match each station to its own time, never reuse one time).
+       ${mode === ListingMode.RENTAL ? '✔ 禮金 {keyMoney}／押金 {deposit}，海外審查可相談' : '📅 引渡時期 {moveInDate}'}
+    4. One short warm closing line on who this home suits (留學生 / 上班族 / 投資 etc., judged from the data) — not hard-sell.
+    5. Contacts on their own line: 📲 Line：linus0922 ／ WeChat：linus352410
+    6. End with 5–8 of the most relevant hashtags chosen from: ${shortHashtags}
+
+    Rules: keep it SHORTER than a full magazine post — at most ONE ━ divider, no ░ banner block. Use Taiwanese terminology. For bare-number money values add thousands separators and 円 (e.g. 102,000円). STRICTLY NO markdown (no *, **, __, heading #); the only # allowed are the hashtags at the end. Plain text + emojis only (posted to social media).
 
     ${terminologyGuide}
     `;
@@ -315,6 +323,72 @@ export const translateListingText = async (
   } catch (error) {
     console.error(error);
     return currentText;
+  }
+};
+
+export const generateHooks = async (
+  data: PropertyData,
+  mode: ListingMode,
+  files: { mimeType: string; data: string }[] = []
+): Promise<string[]> => {
+  const modelName = "gemini-2.5-flash";
+  const hasImages = files.length > 0;
+  const prompt = `
+    You are a Taiwanese real estate copywriter in Tokyo. Generate 5 DIFFERENT punchy opening hook lines (the very first line of a Facebook ${mode} post) in TRADITIONAL CHINESE (Taiwan style).
+    Each hook is exactly ONE line, includes 1-2 emojis, and takes a DIFFERENT angle: (1) location/station, (2) price/value, (3) design/atmosphere, (4) lifestyle/audience fit, (5) urgency/scarcity.
+    ${hasImages ? 'Property photos are attached — you may reference what you actually see for the design/atmosphere hook.' : ''}
+    Data: ${JSON.stringify(data)}
+    Output STRICTLY as a JSON array of 5 strings. No markdown symbols (no *, **, #) other than the emojis. No extra commentary.
+  `;
+  const contents = hasImages
+    ? { parts: [...files.map(f => ({ inlineData: f })), { text: prompt }] }
+    : prompt;
+  try {
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
+      }
+    });
+    const text = response.text;
+    if (!text) return [];
+    return JSON.parse(text);
+  } catch (error) {
+    console.error(error);
+    return [];
+  }
+};
+
+export const suggestHashtags = async (
+  data: PropertyData,
+  mode: ListingMode,
+  currentText: string
+): Promise<string[]> => {
+  const modelName = "gemini-2.5-flash";
+  const prompt = `
+    Suggest 8 relevant TRADITIONAL CHINESE (Taiwan-style) hashtags for this ${mode} Tokyo real-estate Facebook post.
+    Mix broad-reach tags (e.g. #東京租屋, #東京買房) with specific ones derived from the area/station, layout, price range and likely audience (留學生/打工度假/投資客/家庭客 etc.).
+    Data: ${JSON.stringify(data)}
+    Post: ${currentText}
+    Output STRICTLY as a JSON array of 8 strings, each starting with # and containing no spaces.
+  `;
+  try {
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
+      }
+    });
+    const text = response.text;
+    if (!text) return [];
+    return JSON.parse(text);
+  } catch (error) {
+    console.error(error);
+    return [];
   }
 };
 

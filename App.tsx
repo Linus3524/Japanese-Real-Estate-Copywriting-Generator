@@ -13,7 +13,7 @@ import {
   DEFAULT_TERMINOLOGY,
   DEFAULT_HASHTAGS
 } from './constants';
-import { generateListingText, extractPropertyData, rewriteListingText, translateListingText, TranslateLang } from './services/geminiService';
+import { generateListingText, extractPropertyData, rewriteListingText, translateListingText, generateHooks, suggestHashtags, TranslateLang } from './services/geminiService';
 import {
   Building2,
   Sparkles,
@@ -21,11 +21,9 @@ import {
   RefreshCcw,
   CheckCircle2,
   Bot,
-  FileText,
   ScanSearch,
   Loader2,
   X,
-  Plus,
   Wand2,
   SendHorizontal,
   Undo2,
@@ -34,7 +32,15 @@ import {
   BookmarkPlus,
   BookmarkCheck,
   Trash2,
-  ArrowRight
+  ArrowRight,
+  SlidersHorizontal,
+  Users,
+  Lightbulb,
+  Hash,
+  ShieldCheck,
+  CheckCircle,
+  AlertTriangle,
+  ImagePlus
 } from 'lucide-react';
 
 interface UploadedFile {
@@ -75,6 +81,59 @@ const SECTION_PRESETS = [
   { label: "🎣 只換標題", prompt: "只重寫第一行的標題／開場 hook，給一個更搶眼的版本，其餘所有內容原封不動，輸出繁體中文。" },
 ];
 
+// 客群一鍵切換：調整文案訴求重點，不動格式
+const AUDIENCE_PRESETS = [
+  { label: '🎒 留學生', prompt: '把文案的訴求重點調整為吸引留學生：強調離學校近、海外審查友善、生活機能、治安安全，語氣親切，保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。' },
+  { label: '📈 投資客', prompt: '把文案的訴求重點調整為吸引投資客：強調租金收益率、地段增值潛力、周邊開發題材，語氣專業理性，保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。' },
+  { label: '👨‍👩‍👧 家庭客', prompt: '把文案的訴求重點調整為吸引家庭客：強調周邊學區、公園、超市等生活機能、安靜環境、空間實用性，語氣溫暖，保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。' },
+  { label: '💼 上班族', prompt: '把文案的訴求重點調整為吸引上班族：強調通勤便利、辦公商圈距離、深夜返家安全、周邊生活機能，語氣乾淨有效率，保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。' },
+];
+
+// 語感旋鈕：三軸滑桿，0-100，50為中性不調整
+const TONE_AXES: { key: 'friendliness' | 'length' | 'energy'; left: string; right: string }[] = [
+  { key: 'friendliness', left: '親切', right: '專業' },
+  { key: 'length', left: '簡短', right: '詳盡' },
+  { key: 'energy', left: '平實', right: '熱情' },
+];
+
+interface PrePublishIssue {
+  level: 'pass' | 'warn' | 'error';
+  message: string;
+}
+
+// 發文前校對：本機純文字檢查，不呼叫 AI（markdown 符號 / emoji 密度 / 文中找不到來源的數字）
+const runPrePublishCheck = (text: string, data: PropertyData): PrePublishIssue[] => {
+  const issues: PrePublishIssue[] = [];
+
+  const mdMatches = text.match(/(\*\*|\*|__|#{1,6}\s)/g);
+  if (mdMatches && mdMatches.length > 0) {
+    issues.push({ level: 'error', message: `偵測到 ${mdMatches.length} 處 markdown 符號（*、#等），Facebook 不會渲染，建議移除。` });
+  }
+
+  const emojiMatches = text.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu) || [];
+  const lineCount = text.split('\n').filter(l => l.trim()).length || 1;
+  const density = emojiMatches.length / lineCount;
+  if (density > 1.5) {
+    issues.push({ level: 'warn', message: `emoji 密度偏高（平均每行 ${density.toFixed(1)} 個），閱讀起來可能太花，可考慮精簡。` });
+  } else if (emojiMatches.length === 0) {
+    issues.push({ level: 'warn', message: '完全沒有使用 emoji，貼文視覺上可能顯得單調。' });
+  }
+
+  const dataNumbers = new Set(
+    Object.values(data).flatMap(v => String(v).match(/\d+/g) || [])
+  );
+  const textNumbers = [...new Set(text.match(/\d{3,}/g) || [])];
+  const unknownNumbers = textNumbers.filter(n => !dataNumbers.has(n));
+  if (unknownNumbers.length > 0) {
+    issues.push({ level: 'warn', message: `文中出現原始資料找不到對應的數字：${unknownNumbers.join('、')}，請確認是否為 AI 誤植或編造。` });
+  }
+
+  if (issues.length === 0) {
+    issues.push({ level: 'pass', message: '檢查通過，沒有發現明顯問題。' });
+  }
+  return issues;
+};
+
 const REWRITE_PRESETS = [
   { label: "🔥 熱情推薦", prompt: "把整體語氣改得更有活力、更吸引人，多用感嘆詞和強調語句，但保持原有格式與結構不變，輸出繁體中文。" },
   { label: "👔 專業穩重", prompt: "把語氣改得更正式、專業且有說服力，適合商務客或投資型買家，保持原有格式不變，輸出繁體中文。" },
@@ -104,6 +163,15 @@ const App = () => {
   const [isTranslating, setIsTranslating] = useState<TranslateLang | null>(null);
   const [generateCount, setGenerateCount] = useState<number>(1);
   const [variants, setVariants] = useState<string[]>([]);
+
+  // Phase 3: AI 寫作教練 State
+  const [showCoach, setShowCoach] = useState(false);
+  const [toneValues, setToneValues] = useState({ friendliness: 50, length: 50, energy: 50 });
+  const [hookOptions, setHookOptions] = useState<string[]>([]);
+  const [isGeneratingHooks, setIsGeneratingHooks] = useState(false);
+  const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
+  const [isSuggestingTags, setIsSuggestingTags] = useState(false);
+  const [checkResults, setCheckResults] = useState<PrePublishIssue[] | null>(null);
 
   // History State
   const [textHistory, setTextHistory] = useState<string[]>([]);
@@ -312,6 +380,67 @@ const App = () => {
     setIsTranslating(null);
   };
 
+  // --- Phase 3: AI 寫作教練 Handlers ---
+  const buildToneInstruction = (): string | null => {
+    const parts: string[] = [];
+    if (toneValues.friendliness <= 30) parts.push('語氣更親切隨和，像朋友聊天');
+    else if (toneValues.friendliness >= 70) parts.push('語氣更專業正式，適合商務溝通');
+    if (toneValues.length <= 30) parts.push('內容更精簡，去掉次要細節');
+    else if (toneValues.length >= 70) parts.push('內容更詳盡，補充更多細節說明');
+    if (toneValues.energy <= 30) parts.push('語氣更平實克制，少用驚嘆號');
+    else if (toneValues.energy >= 70) parts.push('語氣更熱情有活力，多用感嘆與強調');
+    if (parts.length === 0) return null;
+    return `依照以下語感調整整體文案：${parts.join('；')}。保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。`;
+  };
+
+  const applyTone = () => {
+    const instruction = buildToneInstruction();
+    if (!instruction) return;
+    handleRewrite(instruction);
+  };
+
+  const handlePolishOnly = () => {
+    const base = customRewritePrompt.trim() || '請潤飾文字讓語句更流暢自然';
+    const instruction = `${base}。【重要限制】這是純潤色模式：絕對不可以新增、修改、刪除任何數字、價格、地址、車站名、坪數、樓層、日期等事實資訊，也不可以新增原文沒有的賣點或設備；只能調整詞句的順暢度與語感，保持格式、emoji、結構完全不變，輸出繁體中文。`;
+    handleRewrite(instruction);
+    setCustomRewritePrompt('');
+  };
+
+  const handleGenerateHooks = async () => {
+    setIsGeneratingHooks(true);
+    setHookOptions([]);
+    const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
+    const hooks = await generateHooks(propertyData, mode, imageParts);
+    setHookOptions(hooks);
+    setIsGeneratingHooks(false);
+  };
+
+  const applyHook = (hook: string) => {
+    if (!generatedText) return;
+    const lines = generatedText.split('\n');
+    const idx = lines.findIndex(l => l.trim());
+    if (idx >= 0) lines[idx] = hook;
+    pushToHistory(lines.join('\n'), false);
+    setHookOptions([]);
+  };
+
+  const handleSuggestHashtags = async () => {
+    setIsSuggestingTags(true);
+    setSuggestedTags([]);
+    const tags = await suggestHashtags(propertyData, mode, generatedText);
+    setSuggestedTags(tags);
+    setIsSuggestingTags(false);
+  };
+
+  const insertHashtag = (tag: string) => {
+    if (!generatedText || generatedText.includes(tag)) return;
+    pushToHistory(`${generatedText.replace(/\s+$/, '')} ${tag}`, false);
+  };
+
+  const handlePrePublishCheck = () => {
+    setCheckResults(runPrePublishCheck(generatedText, propertyData));
+  };
+
   const copyToClipboard = () => {
     navigator.clipboard.writeText(generatedText);
     setCopied(true);
@@ -328,11 +457,11 @@ const App = () => {
     ? [
         { v: CopyStyle.CLASSIC, label: '經典條列式' },
         { v: CopyStyle.EDITORIAL, label: '編輯雜誌風 ✨' },
-        { v: CopyStyle.SHORT, label: '限動短版' },
+        { v: CopyStyle.SHORT, label: 'Threads 短文雜誌風' },
       ]
     : [
         { v: CopyStyle.CLASSIC, label: '經典條列式' },
-        { v: CopyStyle.SHORT, label: '限動短版' },
+        { v: CopyStyle.SHORT, label: 'Threads 短文雜誌風' },
       ];
 
   return (
@@ -394,26 +523,35 @@ const App = () => {
 
               <div className="flex flex-wrap gap-3 mb-4">
                 {uploadedFiles.map((file) => (
-                  <div key={file.id} className="w-24 h-24 rounded-xl overflow-hidden border border-gray-200 shadow-sm relative group">
+                  <div key={file.id} className="w-24 h-24 rounded-xl overflow-hidden border border-gray-200 shadow-sm relative group bg-white">
                     {file.mimeType.startsWith('image/') ? (
-                      <img src={file.previewUrl} alt="preview" className="w-full h-full object-cover" />
+                      <img src={file.previewUrl} alt={file.file.name} className="w-full h-full object-cover" />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-white/50 text-gray-400">
-                        <FileText className="w-6 h-6" />
-                      </div>
+                      // PDF：用瀏覽器原生 PDF 檢視器渲染第一頁當縮圖（pointer-events-none 讓 hover 刪除鈕可點）
+                      <embed
+                        src={`${file.previewUrl}#toolbar=0&navpanel=0&scrollbar=0&view=FitH`}
+                        type="application/pdf"
+                        className="w-full h-full pointer-events-none bg-gray-50"
+                      />
                     )}
+                    {/* 檔名標籤：讓使用者知道這張縮圖是哪個檔案 */}
+                    <div className="absolute bottom-0 inset-x-0 bg-black/55 text-white text-[9px] leading-tight px-1.5 py-1 truncate pointer-events-none">
+                      {file.file.name}
+                    </div>
                     <button
                       onClick={() => removeFile(file.id)}
-                      className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white"
+                      className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white z-10"
+                      title="移除"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
                 ))}
                 {uploadedFiles.length < 5 && (
-                  <label className="w-24 h-24 upload-zone flex flex-col items-center justify-center text-[#86868b]">
-                    <Plus className="w-5 h-5" />
-                    <span className="text-[10px] mt-1 font-medium">新增圖紙</span>
+                  <label className="w-24 h-24 upload-zone flex flex-col items-center justify-center text-[#86868b] hover:text-blue-500 hover:border-blue-300 transition cursor-pointer relative">
+                    <ImagePlus className="w-7 h-7" strokeWidth={1.5} />
+                    <span className="text-[10px] mt-1.5 font-medium">新增圖紙</span>
+                    <span className="absolute bottom-1.5 text-[9px] text-gray-400">{uploadedFiles.length}/5</span>
                     <input type="file" className="hidden" multiple accept="image/*,application/pdf" onChange={handleFileSelect} />
                   </label>
                 )}
@@ -597,7 +735,7 @@ const App = () => {
               <div className="mt-8 pt-6 border-t border-gray-200/50">
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-[13px] font-semibold text-gray-700">文案風格</span>
-                  {copyStyle === CopyStyle.EDITORIAL && (
+                  {(copyStyle === CopyStyle.EDITORIAL || copyStyle === CopyStyle.SHORT) && (
                     <span className="text-[11px] text-blue-500 flex items-center gap-1">
                       <Sparkles className="w-3 h-3" /> 會參考上傳照片描述室內
                     </span>
@@ -617,16 +755,15 @@ const App = () => {
 
                 <div className="flex items-center justify-between mb-6">
                   <span className="text-[13px] font-semibold text-gray-700">生成版本數</span>
-                  <div className="segment-control">
-                    <div className="segment-indicator" style={{ width: 'calc(33.333% - 2px)', transform: `translateX(${(generateCount - 1) * 100}%)` }}></div>
+                  <div className="segment-control w-44">
+                    <div className="segment-indicator" style={{ width: 'calc(33.333% - 2px)', transform: `translateX(${generateCount - 1}00%)` }}></div>
                     {[1, 2, 3].map((n) => (
                       <button
                         key={n}
                         onClick={() => setGenerateCount(n)}
-                        className={`segment-btn text-center ${generateCount === n ? 'active' : ''}`}
-                        style={{ width: '3rem' }}
+                        className={`segment-btn flex-1 text-center whitespace-nowrap ${generateCount === n ? 'active' : ''}`}
                       >
-                        {n === 1 ? '1 版' : `${n} 版`}
+                        {n} 版
                       </button>
                     ))}
                   </div>
@@ -679,6 +816,14 @@ const App = () => {
                 <button onClick={handleUndo} disabled={historyIndex <= 0} className="p-2 text-gray-500 hover:text-gray-900 transition hover:bg-black/5 rounded-md disabled:opacity-30" title="復原"><Undo2 className="w-3.5 h-3.5" /></button>
                 <button onClick={handleRedo} disabled={historyIndex >= textHistory.length - 1} className="p-2 text-gray-500 hover:text-gray-900 transition hover:bg-black/5 rounded-md disabled:opacity-30" title="重做"><Redo2 className="w-3.5 h-3.5" /></button>
                 <div className="w-px h-4 bg-gray-300 mx-2"></div>
+                {generatedText && (
+                  <button
+                    onClick={() => setShowCoach(s => !s)}
+                    className={`text-[12px] font-medium px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${showCoach ? 'bg-indigo-500 text-white border-indigo-600/20 shadow-sm' : 'text-gray-700 bg-white shadow-sm border-gray-200 hover:bg-indigo-50 hover:border-indigo-300'}`}
+                  >
+                    <SlidersHorizontal className="w-3 h-3" /> 寫作教練
+                  </button>
+                )}
                 {generatedText && (
                   <button onClick={saveCurrentListing} className="text-[12px] font-medium text-gray-700 bg-white shadow-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-amber-50 hover:border-amber-300 transition flex items-center gap-1.5">
                     <BookmarkPlus className="w-3 h-3 text-amber-500" /> 儲存
@@ -738,6 +883,123 @@ const App = () => {
 
             {generatedText && (
               <div className="px-6 pb-2 text-right text-xs text-gray-400 flex-shrink-0">{generatedText.length} 字元</div>
+            )}
+
+            {/* AI 寫作教練（Phase 3） */}
+            {generatedText && showCoach && (
+              <div className="p-4 border-t border-indigo-100 bg-indigo-50/40 flex-shrink-0 space-y-3">
+                {/* 客群一鍵切換 */}
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                  <span className="text-[10px] font-bold text-indigo-400 uppercase mr-1 flex-shrink-0 flex items-center gap-1"><Users className="w-3 h-3" /> 客群切換</span>
+                  {AUDIENCE_PRESETS.map((opt) => (
+                    <button
+                      key={opt.label}
+                      onClick={() => handleRewrite(opt.prompt)}
+                      disabled={isRewriting}
+                      className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 語感旋鈕 */}
+                <div className="bg-white/70 rounded-xl p-3 border border-white/60">
+                  <span className="text-[10px] font-bold text-indigo-400 uppercase flex items-center gap-1 mb-2"><SlidersHorizontal className="w-3 h-3" /> 語感旋鈕</span>
+                  <div className="space-y-2">
+                    {TONE_AXES.map((axis) => (
+                      <div key={axis.key} className="flex items-center gap-2">
+                        <span className="text-[10px] text-gray-500 w-7 text-right flex-shrink-0">{axis.left}</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={10}
+                          value={toneValues[axis.key]}
+                          onChange={(e) => setToneValues(prev => ({ ...prev, [axis.key]: Number(e.target.value) }))}
+                          className="flex-1 accent-indigo-500"
+                        />
+                        <span className="text-[10px] text-gray-500 w-7 flex-shrink-0">{axis.right}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={applyTone}
+                    disabled={isRewriting}
+                    className="mt-2 w-full text-[11px] font-semibold bg-indigo-500 hover:bg-indigo-600 text-white py-1.5 rounded-lg transition disabled:opacity-50"
+                  >
+                    套用語感
+                  </button>
+                </div>
+
+                {/* 純潤色 / Hook / Hashtag / 校對 */}
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                  <button onClick={handlePolishOnly} disabled={isRewriting} className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-500" /> 純潤色模式
+                  </button>
+                  <button onClick={handleGenerateHooks} disabled={isGeneratingHooks} className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50 flex items-center gap-1">
+                    {isGeneratingHooks ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3 text-amber-500" />} 開場 Hook
+                  </button>
+                  <button onClick={handleSuggestHashtags} disabled={isSuggestingTags} className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50 flex items-center gap-1">
+                    {isSuggestingTags ? <Loader2 className="w-3 h-3 animate-spin" /> : <Hash className="w-3 h-3 text-blue-500" />} 智慧 Hashtag
+                  </button>
+                  <button onClick={handlePrePublishCheck} className="flex-shrink-0 tag-chip text-[11px] py-1 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-violet-500" /> 發文前校對
+                  </button>
+                </div>
+
+                {/* Hook 選項 */}
+                {hookOptions.length > 0 && (
+                  <div className="bg-white/70 rounded-xl p-3 border border-white/60 space-y-1.5">
+                    <span className="text-[10px] font-bold text-amber-500 uppercase flex items-center gap-1"><Lightbulb className="w-3 h-3" /> 選一個取代開頭第一行</span>
+                    {hookOptions.map((h, i) => (
+                      <button
+                        key={i}
+                        onClick={() => applyHook(h)}
+                        className="w-full text-left text-[12px] text-gray-700 bg-white hover:bg-amber-50 border border-gray-200 rounded-lg px-3 py-2 transition"
+                      >
+                        {h}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Hashtag 建議 */}
+                {suggestedTags.length > 0 && (
+                  <div className="bg-white/70 rounded-xl p-3 border border-white/60">
+                    <span className="text-[10px] font-bold text-blue-500 uppercase flex items-center gap-1 mb-2"><Hash className="w-3 h-3" /> 點擊加入文末</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {suggestedTags.map((tag, i) => (
+                        <button
+                          key={i}
+                          onClick={() => insertHashtag(tag)}
+                          className="text-[11px] tag-chip py-1"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 校對結果 */}
+                {checkResults && (
+                  <div className="bg-white/70 rounded-xl p-3 border border-white/60 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-violet-500 uppercase flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> 發文前校對結果</span>
+                      <button onClick={() => setCheckResults(null)} className="text-[10px] text-gray-400 hover:text-gray-600">關閉</button>
+                    </div>
+                    {checkResults.map((issue, i) => (
+                      <div key={i} className="flex items-start gap-1.5 text-[12px]">
+                        {issue.level === 'pass' && <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" />}
+                        {issue.level === 'warn' && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />}
+                        {issue.level === 'error' && <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />}
+                        <span className="text-gray-600">{issue.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
 
             {/* AI Copilot 潤飾區 */}

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ListingMode,
   CopyStyle,
@@ -160,6 +160,7 @@ const App = () => {
   const [copied, setCopied] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
   const [customRewritePrompt, setCustomRewritePrompt] = useState("");
+  const rewriteInputRef = useRef<HTMLTextAreaElement>(null);
   const [isTranslating, setIsTranslating] = useState<TranslateLang | null>(null);
   const [generateCount, setGenerateCount] = useState<number>(1);
   const [variants, setVariants] = useState<string[]>([]);
@@ -189,6 +190,14 @@ const App = () => {
   useEffect(() => { localStorage.setItem(LS_KEYS.terminology, JSON.stringify(terminology)); }, [terminology]);
   useEffect(() => { localStorage.setItem(LS_KEYS.hashtags, JSON.stringify(hashtags)); }, [hashtags]);
   useEffect(() => { localStorage.setItem(LS_KEYS.saved, JSON.stringify(savedListings)); }, [savedListings]);
+
+  // AI 改文輸入框：打字時自動長高，上限 200px 後內部捲動；清空（送出後）自動縮回單行
+  useEffect(() => {
+    const el = rewriteInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [customRewritePrompt]);
 
   // --- Helpers ---
   const fileToBase64 = (file: File): Promise<string> => {
@@ -1052,22 +1061,25 @@ const App = () => {
                   ))}
                 </div>
 
-                <div className="relative flex items-center bg-white rounded-2xl border border-gray-200 shadow-sm focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100 transition-all p-1">
+                <div className="relative flex items-end gap-1 bg-white rounded-2xl border border-gray-200 shadow-sm focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100 transition-all p-1">
                   <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-100 to-purple-100 flex items-center justify-center text-blue-600 ml-1 flex-shrink-0">
                     <Wand2 className="w-4 h-4" />
                   </div>
-                  <input
-                    type="text"
+                  <textarea
+                    ref={rewriteInputRef}
+                    rows={1}
                     value={customRewritePrompt}
                     onChange={(e) => setCustomRewritePrompt(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
+                      // 中文/日文輸入法組字中(isComposing / keyCode 229)時，Enter 只用來確認候選字、消掉閃爍底線，不送出；
+                      // 組字結束後再按一次 Enter 才真的送出。Shift+Enter 換行。
+                      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                         e.preventDefault();
                         handleRewrite(customRewritePrompt);
                       }
                     }}
-                    className="flex-1 bg-transparent border-none outline-none text-[13px] px-3 text-gray-800"
-                    placeholder="讓 AI 幫你修改... (例如：加上適合養貓的描述)"
+                    className="flex-1 bg-transparent border-none outline-none text-[13px] px-3 py-1.5 text-gray-800 resize-none overflow-y-auto leading-relaxed no-scrollbar"
+                    placeholder="讓 AI 幫你修改... (例如：加上適合養貓的描述)。Enter 送出、Shift+Enter 換行"
                   />
                   <button
                     onClick={() => handleRewrite(customRewritePrompt)}

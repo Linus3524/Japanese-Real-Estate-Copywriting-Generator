@@ -6,7 +6,9 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
       server: {
-        port: 3000,
+        // 本軟體的專屬固定埠（不與其他軟體互搶）。strictPort: 埠被佔用就報錯，不自動跳號。
+        port: 5301,
+        strictPort: true,
         host: '0.0.0.0',
       },
       plugins: [react()],

@@ -17,7 +17,7 @@ TRANSPORTATION EXTRACTION:
 };
 
 const RENTAL_TEMPLATE = `
-【{Area} ❀ {Station} 徒歩{Min}分 {Target_Audience} 海外審查OK】
+【{Area} ❀ {Station} 徒歩{Min}分】
 💰 租金：{Price} (管理費 {ManagementFee})
 ✨ 禮金 {KeyMoney} ／ 押金 {Deposit}
 -
@@ -29,16 +29,15 @@ const RENTAL_TEMPLATE = `
 📅 入居日期：{MoveInDate}
 {Features_List}
 -
-📌 適合族群
-⭕ 海外審查  ⭕ 社會人 ⭕ 留學生 ⭕ 打工度假
+{Explicit_Eligibility_Only}
 -
 在日台灣人仲介為您服務
-✔️ 打工渡假簽證租房成功率100%
 ✔️ 提供全中文溝通，協助處理租房、水電瓦斯、網路開通！
 -
 📲 馬上聯絡，快速找房！
 ☛ Line : linus0922
 ☛ Wechat : linus352410
+💬 Facebook 有時會漏掉私訊通知，傳訊後記得在文章下方留言提醒我，才不會錯過您喔！
 {Mode_Specific_Hashtags}
 `;
 
@@ -46,7 +45,7 @@ const SALE_TEMPLATE = `
 ✴︎ 東京買賣公寓推薦 ✴︎
 {Renovation_Status_Line}
 ▫︎ {Structure_Type} {Total_Floors_Line} {Floor_Part}
-▫︎ {Layout} 雙面採光邊間可選
+▫︎ {Layout}
 ▫︎ 🚃 {Line_Station_Combined}
 ▫︎ 📅 引渡時期：{MoveInDate}
 -
@@ -69,6 +68,7 @@ const SALE_TEMPLATE = `
 -
 Line : linus0922
 Wechat : linus352410
+💬 Facebook 有時會漏掉私訊通知，傳訊後記得在文章下方留言提醒我，才不會錯過您喔！
 {Mode_Specific_Hashtags}
 `;
 
@@ -92,9 +92,7 @@ const EDITORIAL_RENTAL_TEMPLATE = `
 
 ✔ 禮金 {KeyMoney}
 ✔ 押金 {Deposit}
-✔ 海外審查可相談
-✔ 留學生可相談
-✔ 打工度假簽證可相談
+{Explicit_Eligibility_Only}
 
 ━━━━━━━━━━━━━━
 
@@ -117,6 +115,43 @@ const EDITORIAL_RENTAL_TEMPLATE = `
 
 📲 Line：linus0922
 📲 WeChat：linus352410
+💬 Facebook 有時會漏掉私訊通知，傳訊後記得在文章下方留言提醒我，才不會錯過您喔！
+
+{Mode_Specific_Hashtags}
+`;
+
+const EDITORIAL_SALE_TEMPLATE = `
+░ {Label}｜{Area} PROPERTY ░
+
+{Opening_Narrative}
+
+━━━━━━━━━━━━━━
+
+📍 {Address}
+
+💰 售價｜{Price}
+🏠 {Layout}｜專有 {Size}㎡
+🏢 {Floor_Detail}｜{Year_Month}
+🚃 {Line_Station_Combined}
+
+━━━━━━━━━━━━━━
+
+{Features_List}
+
+━━━━━━━━━━━━━━
+
+管理費｜{ManagementFee}／月
+修繕積立金｜{RepairFund}／月
+陽台面積｜{Balcony_Size}㎡
+引渡時期｜{MoveInDate}
+
+━━━━━━━━━━━━━━
+
+{Closing_Narrative}
+
+📲 Line：linus0922
+📲 WeChat：linus352410
+💬 Facebook 有時會漏掉私訊通知，傳訊後記得在文章下方留言提醒我，才不會錯過您喔！
 
 {Mode_Specific_Hashtags}
 `;
@@ -136,8 +171,7 @@ export const generateListingText = async (
   const rentalHashtags = hashtags.rental;
   const saleHashtags = `${hashtags.sale} #${data.station}房產`;
 
-  // 編輯雜誌風只用於租賃；限動短版兩種模式皆可；其餘維持經典條列式
-  const useEditorial = style === CopyStyle.EDITORIAL && mode === ListingMode.RENTAL;
+  const useEditorial = style === CopyStyle.EDITORIAL;
   const useShort = style === CopyStyle.SHORT;
   const hasImages = files.length > 0;
 
@@ -166,16 +200,17 @@ export const generateListingText = async (
        💰 租金 {price}（管理費 {mgmt}）  ${mode === ListingMode.RENTAL ? '' : '— for SALE use 售價 instead of 租金, and omit management line if not relevant'}
        🏠 {layout}｜{size}㎡
        🚃 list each station with its OWN walk time (data.line / data.station / data.walkTime are comma-separated in the same order — match each station to its own time, never reuse one time).
-       ${mode === ListingMode.RENTAL ? '✔ 禮金 {keyMoney}／押金 {deposit}，海外審查可相談' : '📅 引渡時期 {moveInDate}'}
+       ${mode === ListingMode.RENTAL ? '✔ 禮金 {keyMoney}／押金 {deposit}（海外審查等資格資訊僅在 data.features 明確提供時才可加入）' : '📅 引渡時期 {moveInDate}'}
     4. One short warm closing line on who this home suits (留學生 / 上班族 / 投資 etc., judged from the data) — not hard-sell.
     5. Contacts on their own line: 📲 Line：linus0922 ／ WeChat：linus352410
-    6. End with 5–8 of the most relevant hashtags chosen from: ${shortHashtags}
+    6. Immediately after the contacts, include this exact reminder on its own line: 💬 Facebook 有時會漏掉私訊通知，傳訊後記得在文章下方留言提醒我，才不會錯過您喔！
+    7. End with 5–8 of the most relevant hashtags chosen from: ${shortHashtags}
 
-    Rules: keep it SHORTER than a full magazine post — at most ONE ━ divider, no ░ banner block. Use Taiwanese terminology. For bare-number money values add thousands separators and 円 (e.g. 102,000円). STRICTLY NO markdown (no *, **, __, heading #); the only # allowed are the hashtags at the end. Plain text + emojis only (posted to social media).
+    Rules: keep it SHORTER than a full magazine post — at most ONE ━ divider, no ░ banner block. Use Taiwanese terminology. For bare-number money values add thousands separators and 円 (e.g. 102,000円). Omit empty fields. Never add eligibility, safety, yield, scarcity or equipment claims not supported by Data/photos. STRICTLY NO markdown (no *, **, __, heading #); the only # allowed are the hashtags at the end. Plain text + emojis only (posted to social media).
 
     ${terminologyGuide}
     `;
-  } else if (useEditorial) {
+  } else if (useEditorial && mode === ListingMode.RENTAL) {
     prompt = `
     You are Linus, a Taiwanese real estate agent in Tokyo, writing an upscale, editorial magazine-style Facebook RENTAL post in TRADITIONAL CHINESE (Taiwan style).
 
@@ -196,17 +231,43 @@ export const generateListingText = async (
        - data.line / data.station / data.walkTime are comma-separated, same order. Match each station to its own walk time. Never reuse one time for all.
        - Total opening should feel light and editorial, not a paragraph-heavy description.
     3. INFO BLOCK: {Area_Ward} = area or ward; {Price} = rent; {ManagementFee} = management fee; {Layout}, {Size}, {Structure}, {TotalFloors}, {Floor}, {MoveInDate} from data. For monetary values that are bare numbers, show thousands separators and append 円 (e.g. 102,000円).
-    4. TERMS: {KeyMoney} = 禮金 value, {Deposit} = 押金 value. Keep the three 可相談 lines unchanged.
+    4. TERMS: {KeyMoney} = 禮金 value, {Deposit} = 押金 value. {Explicit_Eligibility_Only} may include eligibility claims only when explicitly present in data.features; otherwise omit it and the empty section.
     5. {Features_List}: each feature on its own line starting with ✓ (one per line, Taiwanese terms, do NOT join with ／).
     6. {Closing_Narrative}: 1–2 short paragraphs about the neighbourhood lifestyle and who this home suits — warm and tasteful, not hard-sell.
-    7. Keep the 🇯🇵 agent block and 📲 contacts EXACTLY as written.
+    7. Keep the 🇯🇵 agent service block, 📲 contacts and Facebook message reminder EXACTLY as written, but do not present unverified property eligibility as fact.
     8. {Mode_Specific_Hashtags}: end the post with: ${rentalHashtags}
-    9. STRICTLY NO markdown. Never use *, **, __, or heading #. The only allowed # are the hashtags at the very end. Plain text + emojis only (posted to Facebook).
+    9. Omit empty fields. Never add eligibility, safety, yield, scarcity, renovation or equipment claims not supported by Data/photos.
+    10. STRICTLY NO markdown. Never use *, **, __, or heading #. The only allowed # are the hashtags at the very end. Plain text + emojis only (posted to Facebook).
 
     ${terminologyGuide}
 
     Template:
     ${EDITORIAL_RENTAL_TEMPLATE}
+    `;
+  } else if (useEditorial && mode === ListingMode.SALE) {
+    prompt = `
+    You are Linus, a Taiwanese real estate agent in Tokyo, writing an upscale editorial magazine-style Facebook SALE post in TRADITIONAL CHINESE (Taiwan style).
+
+    ${visionNote}
+
+    Data: ${JSON.stringify(data)}
+
+    Fill the template below while keeping its restrained magazine rhythm. Omit a field's entire line when its source value is empty; never print empty labels or placeholders.
+
+    Detailed instructions:
+    1. BANNER: choose a short, honest English label based only on verified data/photos, such as CITY RESIDENCE, RENOVATED HOME, CORNER RESIDENCE or URBAN LIVING. Do not claim renovation, corner placement, a view or design quality unless confirmed.
+    2. {Opening_Narrative}: exactly 2 brief paragraphs, each 1–2 short sentences. First establish the location and nearest station; then explain one verified spatial, building or neighbourhood advantage. No loud sales headline and no invented investment return.
+    3. TRANSPORT: data.line, data.station and data.walkTime are comma-separated in matching order. List every station with its own time; never reuse one time for all stations.
+    4. INFO: use sale-specific facts exactly as provided: sale price, layout, exclusive area, floor/total floors, building date, management fee, repair reserve, balcony area and handover timing. For bare-number yen values, add thousands separators and 円.
+    5. {Features_List}: show only explicitly provided or visibly confirmed features, one per line beginning with ✓. If none exist, omit this section and its adjacent redundant divider.
+    6. {Closing_Narrative}: 1 short paragraph describing who the property may suit based on layout/location facts. Do not promise appreciation, yield, loan approval, safety or scarcity.
+    7. Keep contacts and the Facebook message reminder unchanged, then end with these sale hashtags: ${saleHashtags}
+    8. STRICTLY NO markdown. The only # characters allowed are hashtags. Keep the post concise, tasteful and easy to scan.
+
+    ${terminologyGuide}
+
+    Template:
+    ${EDITORIAL_SALE_TEMPLATE}
     `;
   } else {
     const templateToUse = mode === ListingMode.RENTAL ? RENTAL_TEMPLATE : SALE_TEMPLATE;
@@ -236,7 +297,11 @@ export const generateListingText = async (
        ✅ 乾濕分離
        ✅ 獨立洗臉台
        ✅ 空調
+       - Never add eligibility, corner-room, lighting, school, safety, yield, scarcity, renovation or equipment claims unless explicitly present in Data or visibly confirmed in attached photos.
+       - {Explicit_Eligibility_Only}: include eligibility lines only when the corresponding fact is explicitly present in data.features. Otherwise omit this placeholder and its surrounding empty section.
+       - Omit any template line whose source field is empty. Never print a placeholder, "未提供", an invented value, or an empty label.
     6. STRICTLY NO markdown formatting. Never use *, **, __, #, or any markdown symbols anywhere in the output. Plain text and emojis only. The output will be posted to Facebook where markdown does NOT render.
+    7. Keep the Line, WeChat and Facebook message reminder block from the template exactly as written in both RENTAL and SALE output.
 
     ${terminologyGuide}
 
@@ -258,10 +323,11 @@ export const generateListingText = async (
       model: modelName,
       contents,
     });
-    return response.text || "Error generating text.";
+    if (!response.text) throw new Error('Empty generation response');
+    return response.text;
   } catch (error) {
     console.error(error);
-    return "Generation failed.";
+    throw error;
   }
 };
 
@@ -269,7 +335,8 @@ export const rewriteListingText = async (
   currentText: string,
   instruction: string,
   terminology: TerminologyItem[],
-  files: { mimeType: string; data: string }[] = []
+  files: { mimeType: string; data: string }[] = [],
+  maxBodyChars?: number
 ): Promise<string> => {
   const modelName = "gemini-2.5-flash";
   const terminologyGuide = buildTerminologyGuide(terminology);
@@ -290,9 +357,35 @@ export const rewriteListingText = async (
       model: modelName,
       contents,
     });
-    return response.text || currentText;
+    const firstDraft = response.text || currentText;
+    const bodyLength = firstDraft
+      .split('\n')
+      .filter(line => !line.trim().startsWith('#'))
+      .join('\n')
+      .replace(/\s/g, '').length;
+
+    // 字數是產品承諾而非建議：第一次超標時自動再壓縮一次。
+    if (maxBodyChars && bodyLength > maxBodyChars) {
+      const retryPrompt = `
+        Compress the draft below to AT MOST ${maxBodyChars} non-whitespace characters, excluding hashtag-only lines.
+        This is a hard limit. Preserve price, nearest station and walk time, layout, area, up to 3 key features, contacts and hashtags.
+        Delete repeated service copy, secondary details, decorative dividers and verbose calls to action first.
+        Never change any retained fact or number and never invent information.
+        Output only the final Traditional Chinese post with no markdown.
+
+        ORIGINAL SOURCE (facts must agree with this):
+        ${currentText}
+
+        DRAFT TO COMPRESS:
+        ${firstDraft}
+      `;
+      const retry = await ai.models.generateContent({ model: modelName, contents: retryPrompt });
+      return retry.text || firstDraft;
+    }
+    return firstDraft;
   } catch (error) {
-    return currentText;
+    console.error(error);
+    throw error;
   }
 };
 
@@ -322,7 +415,7 @@ export const translateListingText = async (
     return response.text || currentText;
   } catch (error) {
     console.error(error);
-    return currentText;
+    throw error;
   }
 };
 
@@ -335,7 +428,8 @@ export const generateHooks = async (
   const hasImages = files.length > 0;
   const prompt = `
     You are a Taiwanese real estate copywriter in Tokyo. Generate 5 DIFFERENT punchy opening hook lines (the very first line of a Facebook ${mode} post) in TRADITIONAL CHINESE (Taiwan style).
-    Each hook is exactly ONE line, includes 1-2 emojis, and takes a DIFFERENT angle: (1) location/station, (2) price/value, (3) design/atmosphere, (4) lifestyle/audience fit, (5) urgency/scarcity.
+    Each hook is exactly ONE line, includes 0-2 emojis, and takes a DIFFERENT angle: (1) location/station, (2) price/value, (3) layout or an explicitly provided feature, (4) lifestyle fit supported by the data, (5) another verified key fact.
+    Never imply urgency, scarcity, investment return, safety, eligibility, a view, lighting or equipment unless that exact claim is present in the data or visibly confirmed in an attached photo.
     ${hasImages ? 'Property photos are attached — you may reference what you actually see for the design/atmosphere hook.' : ''}
     Data: ${JSON.stringify(data)}
     Output STRICTLY as a JSON array of 5 strings. No markdown symbols (no *, **, #) other than the emojis. No extra commentary.
@@ -409,7 +503,11 @@ export const extractPropertyData = async (
 
     MODE DETECTION (CRITICAL):
     - Determine if this is a "RENTAL" (租賃) or "SALE" (買賣) document.
-    - Look for keywords like "賃貸" (Rental), "売買" (Sale), "売マンション" (Sale Condo), "賃貸マンション" (Rental Condo).
+    - Return exactly "RENTAL" or "SALE" in uppercase English. Never return a translated label.
+    - SALE signals: 売買, 売マンション, 中古マンション, 販売価格, 売却, 修繕積立金, or a price expressed in 万円/億円.
+    - RENTAL signals: 賃貸, 賃料, 家賃, 敷金, 礼金, 保証金, or a monthly rent amount.
+    - Some sale sheets show a management fee and some investment sheets show an estimated rent. Those facts alone do NOT make it a rental. Identify the document's primary transaction and price label.
+    - If signals conflict, prioritize the main heading and the label immediately beside the primary price.
 
     TRANSPORTATION (CRITICAL):
     - Scan the entire document for all railway lines, stations, and their individual walk times.
@@ -449,7 +547,7 @@ export const extractPropertyData = async (
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            mode: { type: Type.STRING, description: "Detected mode: RENTAL or SALE" },
+            mode: { type: Type.STRING, enum: ["RENTAL", "SALE"], description: "Primary transaction type. Must be exactly RENTAL or SALE." },
             address: { type: Type.STRING },
             line: { type: Type.STRING, description: "All rail lines found, comma separated" },
             station: { type: Type.STRING, description: "All station names found, comma separated" },
@@ -478,10 +576,15 @@ export const extractPropertyData = async (
 
     const parsed = JSON.parse(text);
     const { mode, ...data } = parsed;
+    const normalizedMode = String(mode || '').trim().toUpperCase();
 
     return {
       data: data as Partial<PropertyData>,
-      detectedMode: mode === 'SALE' ? ListingMode.SALE : ListingMode.RENTAL
+      detectedMode: normalizedMode === 'SALE'
+        ? ListingMode.SALE
+        : normalizedMode === 'RENTAL'
+          ? ListingMode.RENTAL
+          : undefined
     };
   } catch (error) {
     console.error("Extraction error:", error);

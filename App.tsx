@@ -78,15 +78,21 @@ const SECTION_PRESETS = [
   { label: "✍️ 只改開頭", prompt: "只重寫開頭的標題與開場敘述，讓它更吸引人，其餘所有內容（價格、設備、聯絡方式、hashtag）原封不動，輸出繁體中文。" },
   { label: "🛠 只改設備說明", prompt: "只重寫設備／房屋亮點那一段，讓描述更生動具體，其餘所有內容原封不動，輸出繁體中文。" },
   { label: "🏘 只改結尾", prompt: "只重寫結尾的街區生活／推薦段落，讓它更溫暖有感，其餘所有內容原封不動，輸出繁體中文。" },
-  { label: "🎣 只換標題", prompt: "只重寫第一行的標題／開場 hook，給一個更搶眼的版本，其餘所有內容原封不動，輸出繁體中文。" },
 ];
 
 // 客群一鍵切換：調整文案訴求重點，不動格式
 const AUDIENCE_PRESETS = [
-  { label: '🎒 留學生', prompt: '把文案的訴求重點調整為吸引留學生：強調離學校近、海外審查友善、生活機能、治安安全，語氣親切，保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。' },
-  { label: '📈 投資客', prompt: '把文案的訴求重點調整為吸引投資客：強調租金收益率、地段增值潛力、周邊開發題材，語氣專業理性，保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。' },
-  { label: '👨‍👩‍👧 家庭客', prompt: '把文案的訴求重點調整為吸引家庭客：強調周邊學區、公園、超市等生活機能、安靜環境、空間實用性，語氣溫暖，保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。' },
-  { label: '💼 上班族', prompt: '把文案的訴求重點調整為吸引上班族：強調通勤便利、辦公商圈距離、深夜返家安全、周邊生活機能，語氣乾淨有效率，保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。' },
+  { id: 'student', label: '🎒 留學生', focus: '從現有資料中優先呈現交通、生活便利與海外入住相關資訊' },
+  { id: 'investor', label: '📈 投資客', focus: '從現有資料中優先呈現價格、地段與可量化的投資資訊' },
+  { id: 'family', label: '👨‍👩‍👧 家庭客', focus: '從現有資料中優先呈現空間、環境與家庭生活機能' },
+  { id: 'worker', label: '💼 上班族', focus: '從現有資料中優先呈現通勤效率與日常生活便利性' },
+];
+
+const STYLE_PRESETS = [
+  { label: '自然平衡', values: { friendliness: 50, length: 50, energy: 50 } },
+  { label: '親切精簡', values: { friendliness: 20, length: 15, energy: 55 } },
+  { label: '專業穩重', values: { friendliness: 82, length: 65, energy: 25 } },
+  { label: '熱情吸睛', values: { friendliness: 32, length: 45, energy: 88 } },
 ];
 
 // 語感旋鈕：三軸滑桿，0-100，50為中性不調整
@@ -101,9 +107,47 @@ interface PrePublishIssue {
   message: string;
 }
 
+// 生成前的本機防呆：以只有買賣／租賃才會出現的欄位與價格單位交叉檢查。
+// 無明確證據時保留使用者目前選擇，不用單一模糊欄位擅自切換。
+const inferListingMode = (data: PropertyData, currentMode: ListingMode): ListingMode => {
+  let saleScore = 0;
+  let rentalScore = 0;
+  const price = data.price.replace(/[,，\s]/g, '');
+
+  if (data.repairFund.trim()) saleScore += 4;
+  if (/萬円|万円|億円|售價|販売価格|売買/.test(price)) saleScore += 5;
+  const numericPrice = Number(price.replace(/[^\d.]/g, ''));
+  if (Number.isFinite(numericPrice) && numericPrice >= 1000000) saleScore += 3;
+
+  if (data.keyMoney.trim()) rentalScore += 3;
+  if (data.deposit.trim()) rentalScore += 3;
+  if (/月額|每月|租金|賃料|家賃/.test(price)) rentalScore += 5;
+
+  if (saleScore >= rentalScore + 3) return ListingMode.SALE;
+  if (rentalScore >= saleScore + 3) return ListingMode.RENTAL;
+  return currentMode;
+};
+
 // 發文前校對：本機純文字檢查，不呼叫 AI（markdown 符號 / emoji 密度 / 文中找不到來源的數字）
-const runPrePublishCheck = (text: string, data: PropertyData): PrePublishIssue[] => {
+const runPrePublishCheck = (text: string, data: PropertyData, mode: ListingMode): PrePublishIssue[] => {
   const issues: PrePublishIssue[] = [];
+
+  if (mode === ListingMode.SALE && /租金|賃料|敷金|押金|禮金/.test(text)) {
+    issues.push({ level: 'error', message: '目前是買賣物件，但文案出現租金／押金／禮金等租賃用語，請確認文案類型。' });
+  }
+  if (mode === ListingMode.RENTAL && /售價|販売価格|修繕積立金|買賣公寓/.test(text)) {
+    issues.push({ level: 'error', message: '目前是租賃物件，但文案出現售價／修繕積立金等買賣用語，請確認文案類型。' });
+  }
+
+  const normalizedText = text.replace(/[,，\s]/g, '');
+  const missingCore = [
+    { label: '價格', value: data.price },
+    { label: '車站', value: data.station },
+    { label: '格局', value: data.layout },
+  ].filter(item => item.value.trim() && !normalizedText.includes(item.value.replace(/[,，\s]/g, '')));
+  if (missingCore.length > 0) {
+    issues.push({ level: 'warn', message: `文案可能遺漏核心資訊：${missingCore.map(item => item.label).join('、')}。` });
+  }
 
   const mdMatches = text.match(/(\*\*|\*|__|#{1,6}\s)/g);
   if (mdMatches && mdMatches.length > 0) {
@@ -122,7 +166,11 @@ const runPrePublishCheck = (text: string, data: PropertyData): PrePublishIssue[]
   const dataNumbers = new Set(
     Object.values(data).flatMap(v => String(v).match(/\d+/g) || [])
   );
-  const textNumbers = [...new Set(text.match(/\d{3,}/g) || [])];
+  const factualText = text
+    .split('\n')
+    .filter(line => !/(?:line|wechat|微信|聯絡|联系)\s*[:：]/i.test(line) && !line.trim().startsWith('#'))
+    .join('\n');
+  const textNumbers = [...new Set(factualText.match(/\d{3,}/g) || [])];
   const unknownNumbers = textNumbers.filter(n => !dataNumbers.has(n));
   if (unknownNumbers.length > 0) {
     issues.push({ level: 'warn', message: `文中出現原始資料找不到對應的數字：${unknownNumbers.join('、')}，請確認是否為 AI 誤植或編造。` });
@@ -134,14 +182,7 @@ const runPrePublishCheck = (text: string, data: PropertyData): PrePublishIssue[]
   return issues;
 };
 
-const REWRITE_PRESETS = [
-  { label: "🔥 熱情推薦", prompt: "把整體語氣改得更有活力、更吸引人，多用感嘆詞和強調語句，但保持原有格式與結構不變，輸出繁體中文。" },
-  { label: "👔 專業穩重", prompt: "把語氣改得更正式、專業且有說服力，適合商務客或投資型買家，保持原有格式不變，輸出繁體中文。" },
-  { label: "🚃 交通生活機能", prompt: "強調交通便利性、附近生活機能（超市、便利商店、餐廳等），適合重視通勤的上班族或留學生，保持格式不變，輸出繁體中文。" },
-  { label: "📈 投資置產", prompt: "強調地點增值潛力、租金收益率、區域發展前景，用數字和地段優勢吸引投資型買家，保持格式不變，輸出繁體中文。" },
-  { label: "🎒 留學打工度假", prompt: "語氣輕鬆親切，強調海外審查通過率高、入住手續簡便、附近生活便利，針對台灣留學生和打工度假族群，保持格式不變，輸出繁體中文。" },
-  { label: "✂️ 精簡版", prompt: "把文案濃縮為精簡版本，去掉冗長說明，只保留最關鍵的資訊和賣點，適合在限制字數的平台發文，輸出繁體中文。" }
-];
+type CoachTab = 'rewrite' | 'section' | 'tools' | 'language';
 
 const App = () => {
   // --- Core State ---
@@ -153,6 +194,7 @@ const App = () => {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [supplementaryText, setSupplementaryText] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [modeDetectionNotice, setModeDetectionNotice] = useState<string>('');
 
   // Generation State
   const [generatedText, setGeneratedText] = useState<string>("");
@@ -167,6 +209,8 @@ const App = () => {
 
   // Phase 3: AI 寫作教練 State
   const [showCoach, setShowCoach] = useState(false);
+  const [coachTab, setCoachTab] = useState<CoachTab>('rewrite');
+  const [selectedAudience, setSelectedAudience] = useState<string | null>(null);
   const [toneValues, setToneValues] = useState({ friendliness: 50, length: 50, energy: 50 });
   const [hookOptions, setHookOptions] = useState<string[]>([]);
   const [isGeneratingHooks, setIsGeneratingHooks] = useState(false);
@@ -216,6 +260,9 @@ const App = () => {
   // --- History Management ---
   const updateCurrentHistory = (text: string) => {
     setGeneratedText(text);
+    setHookOptions([]);
+    setSuggestedTags([]);
+    setCheckResults(null);
     if (historyIndex >= 0) {
       const newHistory = [...textHistory];
       newHistory[historyIndex] = text;
@@ -225,6 +272,7 @@ const App = () => {
 
   const pushToHistory = (text: string, reset: boolean = false) => {
     setGeneratedText(text);
+    setCheckResults(null);
     if (reset) {
       setTextHistory([text]);
       setHistoryIndex(0);
@@ -241,6 +289,9 @@ const App = () => {
       const newIndex = historyIndex - 1;
       setHistoryIndex(newIndex);
       setGeneratedText(textHistory[newIndex]);
+      setHookOptions([]);
+      setSuggestedTags([]);
+      setCheckResults(null);
     }
   };
 
@@ -249,6 +300,9 @@ const App = () => {
       const newIndex = historyIndex + 1;
       setHistoryIndex(newIndex);
       setGeneratedText(textHistory[newIndex]);
+      setHookOptions([]);
+      setSuggestedTags([]);
+      setCheckResults(null);
     }
   };
 
@@ -329,14 +383,14 @@ const App = () => {
     try {
       const parts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
       const { data: extractedData, detectedMode } = await extractPropertyData(parts, supplementaryText, terminology);
-      if (detectedMode) setMode(detectedMode);
-      setPropertyData(prev => {
-        const next = { ...prev };
-        (Object.keys(extractedData) as Array<keyof PropertyData>).forEach(key => {
-          if (extractedData[key]) next[key] = extractedData[key]!;
-        });
-        return next;
+      const nextData = { ...propertyData };
+      (Object.keys(extractedData) as Array<keyof PropertyData>).forEach(key => {
+        if (extractedData[key]) nextData[key] = extractedData[key]!;
       });
+      const resolvedMode = inferListingMode(nextData, detectedMode || mode);
+      setPropertyData(nextData);
+      setMode(resolvedMode);
+      setModeDetectionNotice(`已自動判斷為「${resolvedMode === ListingMode.SALE ? '買賣' : '租賃'}」物件`);
     } catch (error) {
       console.error("Analysis failed", error);
       alert("無法分析檔案，請重試。");
@@ -349,19 +403,30 @@ const App = () => {
   const handleGenerateText = async () => {
     setIsGenerating(true);
     setVariants([]);
-    const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
-    if (generateCount > 1) {
-      const results = await Promise.all(
-        Array.from({ length: generateCount }, (_, i) =>
-          generateListingText(propertyData, mode, terminology, hashtags, copyStyle, imageParts, VARIATION_HINTS[i] || "")
-        )
-      );
-      setVariants(results);
-    } else {
-      const text = await generateListingText(propertyData, mode, terminology, hashtags, copyStyle, imageParts);
-      pushToHistory(text, true);
+    const resolvedMode = inferListingMode(propertyData, mode);
+    if (resolvedMode !== mode) {
+      setMode(resolvedMode);
+      setModeDetectionNotice(`生成前已修正為「${resolvedMode === ListingMode.SALE ? '買賣' : '租賃'}」物件`);
     }
-    setIsGenerating(false);
+    try {
+      const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
+      if (generateCount > 1) {
+        const results = await Promise.all(
+          Array.from({ length: generateCount }, (_, i) =>
+            generateListingText(propertyData, resolvedMode, terminology, hashtags, copyStyle, imageParts, VARIATION_HINTS[i] || "")
+          )
+        );
+        setVariants(results);
+      } else {
+        const text = await generateListingText(propertyData, resolvedMode, terminology, hashtags, copyStyle, imageParts);
+        pushToHistory(text, true);
+      }
+    } catch (error) {
+      console.error('Generation failed', error);
+      alert('文案生成失敗，原有內容沒有被修改，請稍後重試。');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const selectVariant = (text: string) => {
@@ -369,43 +434,96 @@ const App = () => {
     pushToHistory(text, true);
   };
 
-  const handleRewrite = async (instruction: string) => {
+  const handleRewrite = async (instruction: string, maxBodyChars?: number) => {
     if (!generatedText || !instruction.trim()) return;
     setIsRewriting(true);
-    const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
-    const newText = await rewriteListingText(generatedText, instruction, terminology, imageParts);
-    pushToHistory(newText, false);
-    setIsRewriting(false);
-    setCustomRewritePrompt("");
+    setHookOptions([]);
+    setSuggestedTags([]);
+    setCheckResults(null);
+    try {
+      const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
+      const newText = await rewriteListingText(generatedText, instruction, terminology, imageParts, maxBodyChars);
+      pushToHistory(newText, false);
+      setCustomRewritePrompt("");
+    } catch (error) {
+      console.error('Rewrite failed', error);
+      alert('修改失敗，原文已完整保留，請稍後重試。');
+    } finally {
+      setIsRewriting(false);
+    }
   };
 
   const handleTranslate = async (lang: TranslateLang) => {
     if (!generatedText) return;
     setIsTranslating(lang);
     setIsRewriting(true);
-    const newText = await translateListingText(generatedText, lang);
-    pushToHistory(newText, false);
-    setIsRewriting(false);
-    setIsTranslating(null);
+    setHookOptions([]);
+    setSuggestedTags([]);
+    setCheckResults(null);
+    try {
+      const newText = await translateListingText(generatedText, lang);
+      pushToHistory(newText, false);
+    } catch (error) {
+      console.error('Translation failed', error);
+      alert('翻譯失敗，原文已完整保留，請稍後重試。');
+    } finally {
+      setIsRewriting(false);
+      setIsTranslating(null);
+    }
   };
 
   // --- Phase 3: AI 寫作教練 Handlers ---
-  const buildToneInstruction = (): string | null => {
-    const parts: string[] = [];
-    if (toneValues.friendliness <= 30) parts.push('語氣更親切隨和，像朋友聊天');
-    else if (toneValues.friendliness >= 70) parts.push('語氣更專業正式，適合商務溝通');
-    if (toneValues.length <= 30) parts.push('內容更精簡，去掉次要細節');
-    else if (toneValues.length >= 70) parts.push('內容更詳盡，補充更多細節說明');
-    if (toneValues.energy <= 30) parts.push('語氣更平實克制，少用驚嘆號');
-    else if (toneValues.energy >= 70) parts.push('語氣更熱情有活力，多用感嘆與強調');
-    if (parts.length === 0) return null;
-    return `依照以下語感調整整體文案：${parts.join('；')}。保持原有格式、emoji、結構與所有事實數字不變，輸出繁體中文。`;
+  const toneDescription = (key: keyof typeof toneValues, value: number) => {
+    const levels = value < 20 ? 0 : value < 40 ? 1 : value < 60 ? 2 : value < 80 ? 3 : 4;
+    const labels = {
+      friendliness: ['非常親切', '偏親切', '自然', '偏專業', '非常專業'],
+      length: ['極精簡 ≤260字', '精簡 ≤340字', '適中', '較詳盡', '非常詳盡'],
+      energy: ['沉穩克制', '偏平實', '自然', '較有活力', '熱情吸睛'],
+    };
+    return labels[key][levels];
+  };
+
+  const buildToneInstruction = (): string => {
+    const audience = AUDIENCE_PRESETS.find(item => item.id === selectedAudience);
+    const friendlinessRule = toneValues.friendliness < 20
+      ? '使用自然口語、短句與直接稱呼，避免官腔、艱深術語及過度推銷。'
+      : toneValues.friendliness < 40
+        ? '語氣溫和易讀，可使用少量口語，但保持資訊清楚。'
+        : toneValues.friendliness < 60
+          ? '使用自然、中性的台灣繁體中文。'
+          : toneValues.friendliness < 80
+            ? '使用有條理的專業語氣，避免口語助詞與誇張形容。'
+            : '使用正式、精準、商務式語氣；以可驗證資訊為主，不用口語、感嘆詞或情緒化推銷。';
+    const lengthRule = toneValues.length < 20
+      ? '【硬性篇幅限制】Hashtag 不計，正文最多 260 個中文字元。刪除重複敘述、制式服務介紹、次要賣點與冗長 CTA；只保留價格、車站與步行時間、格局、面積、最重要的 3 個特色及聯絡方式。不得為了湊格式而增加文字。'
+      : toneValues.length < 40
+        ? '【硬性篇幅限制】Hashtag 不計，正文最多 340 個中文字元。刪除重複段落、次要形容與冗長 CTA，優先保留價格、交通、格局、面積、重要特色及聯絡方式。'
+        : toneValues.length < 60
+          ? '篇幅維持與原文接近，刪除明顯重複的句子。'
+          : toneValues.length < 80
+            ? '可在原始資料足夠時補充解釋，但正文不要超過原文的 1.25 倍。'
+            : '可更完整地組織原文已有資訊，但正文不要超過原文的 1.5 倍。';
+    const energyRule = toneValues.energy < 20
+      ? '全文最多 2 個 emoji、不可使用驚嘆號，避免「必看、超值、搶手」等煽動詞。'
+      : toneValues.energy < 40
+        ? '降低情緒用語，每個段落最多 1 個 emoji，全文最多 1 個驚嘆號。'
+        : toneValues.energy < 60
+          ? '維持自然張力，emoji 與驚嘆號不超過原文密度。'
+          : toneValues.energy < 80
+            ? '可以增加節奏與行動感，但全文最多 6 個 emoji、2 個驚嘆號，不可製造虛假急迫感。'
+            : '開場可更吸睛並使用有力短句，但全文最多 8 個 emoji、3 個驚嘆號；禁止虛構稀缺、搶購或保證性說法。';
+    const parts = [
+      `親切／專業程度：${toneDescription('friendliness', toneValues.friendliness)}`,
+      `篇幅：${toneDescription('length', toneValues.length)}`,
+      `情緒張力：${toneDescription('energy', toneValues.energy)}`,
+    ];
+    if (audience) parts.unshift(`目標讀者：${audience.label.replace(/^\S+\s/, '')}；${audience.focus}`);
+    return `依照以下設定調整整體文案：${parts.join('；')}。${friendlinessRule} ${lengthRule} ${energyRule} 風格設定可調整段落、emoji 與標點，不必保持原有版型。只能重整原文已有資訊，不得推測或新增學區、治安、收益率、設備、距離等未提供的事實。凡保留在新版中的數字、價格、地址、站名、坪數、樓層與日期都必須與原文完全相同。輸出繁體中文。`;
   };
 
   const applyTone = () => {
-    const instruction = buildToneInstruction();
-    if (!instruction) return;
-    handleRewrite(instruction);
+    const maxBodyChars = toneValues.length < 20 ? 260 : toneValues.length < 40 ? 340 : undefined;
+    handleRewrite(buildToneInstruction(), maxBodyChars);
   };
 
   const handlePolishOnly = () => {
@@ -416,29 +534,42 @@ const App = () => {
   };
 
   const handleGenerateHooks = async () => {
+    if (!generatedText || isGeneratingHooks || isRewriting) return;
     setIsGeneratingHooks(true);
     setHookOptions([]);
-    const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
-    const hooks = await generateHooks(propertyData, mode, imageParts);
-    setHookOptions(hooks);
-    setIsGeneratingHooks(false);
+    try {
+      const imageParts = uploadedFiles.map(f => ({ mimeType: f.mimeType, data: f.base64 }));
+      const hooks = await generateHooks(propertyData, mode, imageParts);
+      setHookOptions(hooks);
+      if (hooks.length === 0) alert('目前無法產生標題，請稍後重試。');
+    } finally {
+      setIsGeneratingHooks(false);
+    }
   };
 
   const applyHook = (hook: string) => {
     if (!generatedText) return;
-    const lines = generatedText.split('\n');
-    const idx = lines.findIndex(l => l.trim());
-    if (idx >= 0) lines[idx] = hook;
-    pushToHistory(lines.join('\n'), false);
+    const cleanHook = hook.trim();
+    const firstLine = generatedText.split('\n').find(line => line.trim())?.trim();
+    // 安全優先：無法可靠判斷使用者是否已有標題，因此永遠採用插入，絕不覆蓋原文。
+    // 若同一個 Hook 已經位於文案開頭，則只關閉選項，不重複加入。
+    if (firstLine !== cleanHook) {
+      pushToHistory(`${cleanHook}\n\n${generatedText.replace(/^\s+/, '')}`, false);
+    }
     setHookOptions([]);
   };
 
   const handleSuggestHashtags = async () => {
+    if (!generatedText || isSuggestingTags || isRewriting) return;
     setIsSuggestingTags(true);
     setSuggestedTags([]);
-    const tags = await suggestHashtags(propertyData, mode, generatedText);
-    setSuggestedTags(tags);
-    setIsSuggestingTags(false);
+    try {
+      const tags = await suggestHashtags(propertyData, mode, generatedText);
+      setSuggestedTags(tags);
+      if (tags.length === 0) alert('目前無法取得 Hashtag 建議，請稍後重試。');
+    } finally {
+      setIsSuggestingTags(false);
+    }
   };
 
   const insertHashtag = (tag: string) => {
@@ -447,7 +578,7 @@ const App = () => {
   };
 
   const handlePrePublishCheck = () => {
-    setCheckResults(runPrePublishCheck(generatedText, propertyData));
+    setCheckResults(runPrePublishCheck(generatedText, propertyData, mode));
   };
 
   const copyToClipboard = () => {
@@ -470,6 +601,7 @@ const App = () => {
       ]
     : [
         { v: CopyStyle.CLASSIC, label: '經典條列式' },
+        { v: CopyStyle.EDITORIAL, label: '編輯雜誌風 ✨' },
         { v: CopyStyle.SHORT, label: 'Threads 短文雜誌風' },
       ];
 
@@ -492,13 +624,13 @@ const App = () => {
           ></div>
           <button
             className={`segment-btn w-1/2 text-center ${isRental ? 'active' : ''}`}
-            onClick={() => { setMode(ListingMode.RENTAL); setPropertyData(INITIAL_PROPERTY_DATA); setVariants([]); }}
+            onClick={() => { setMode(ListingMode.RENTAL); setModeDetectionNotice(''); setPropertyData(INITIAL_PROPERTY_DATA); setVariants([]); }}
           >
             租賃
           </button>
           <button
             className={`segment-btn w-1/2 text-center ${!isRental ? 'active' : ''}`}
-            onClick={() => { setMode(ListingMode.SALE); setPropertyData(INITIAL_PROPERTY_DATA); setCopyStyle(CopyStyle.CLASSIC); setVariants([]); }}
+            onClick={() => { setMode(ListingMode.SALE); setModeDetectionNotice(''); setPropertyData(INITIAL_PROPERTY_DATA); setCopyStyle(CopyStyle.CLASSIC); setVariants([]); }}
           >
             買賣
           </button>
@@ -527,6 +659,11 @@ const App = () => {
               <div className="flex items-center gap-2 mb-2">
                 <ScanSearch className="w-[18px] h-[18px]" style={{ color: '#007aff' }} />
                 <h2 className="text-[15px] font-semibold">智慧圖紙掃描</h2>
+                {modeDetectionNotice && (
+                  <span className={`ml-auto text-[10px] font-semibold px-2 py-1 rounded-full ${isRental ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600'}`}>
+                    {modeDetectionNotice}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-[#86868b] mb-4">AI 會自動識別並將術語轉化為「台灣慣用說法」與「多車站資訊」。</p>
 
@@ -896,71 +1033,76 @@ const App = () => {
 
             {/* AI 寫作教練（Phase 3） */}
             {generatedText && showCoach && (
-              <div className="p-4 border-t border-indigo-100 bg-indigo-50/40 flex-shrink-0 space-y-3">
-                {/* 客群一鍵切換 */}
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-                  <span className="text-[10px] font-bold text-indigo-400 uppercase mr-1 flex-shrink-0 flex items-center gap-1"><Users className="w-3 h-3" /> 客群切換</span>
-                  {AUDIENCE_PRESETS.map((opt) => (
-                    <button
-                      key={opt.label}
-                      onClick={() => handleRewrite(opt.prompt)}
-                      disabled={isRewriting}
-                      className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
-                    >
-                      {opt.label}
-                    </button>
+              <div className="coach-panel border-t border-indigo-100 bg-indigo-50/40 flex-shrink-0">
+                <div className="coach-tabs" role="tablist" aria-label="寫作教練功能">
+                  {([
+                    ['rewrite', '整體改寫'], ['section', '局部修改'], ['tools', '發文工具'], ['language', '翻譯']
+                  ] as [CoachTab, string][]).map(([id, label]) => (
+                    <button key={id} role="tab" aria-selected={coachTab === id} onClick={() => setCoachTab(id)} className={`coach-tab ${coachTab === id ? 'active' : ''}`}>{label}</button>
                   ))}
                 </div>
 
-                {/* 語感旋鈕 */}
-                <div className="bg-white/70 rounded-xl p-3 border border-white/60">
-                  <span className="text-[10px] font-bold text-indigo-400 uppercase flex items-center gap-1 mb-2"><SlidersHorizontal className="w-3 h-3" /> 語感旋鈕</span>
-                  <div className="space-y-2">
-                    {TONE_AXES.map((axis) => (
-                      <div key={axis.key} className="flex items-center gap-2">
-                        <span className="text-[10px] text-gray-500 w-7 text-right flex-shrink-0">{axis.left}</span>
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          step={10}
-                          value={toneValues[axis.key]}
-                          onChange={(e) => setToneValues(prev => ({ ...prev, [axis.key]: Number(e.target.value) }))}
-                          className="flex-1 accent-indigo-500"
-                        />
-                        <span className="text-[10px] text-gray-500 w-7 flex-shrink-0">{axis.right}</span>
+                <div className="p-4 space-y-3 max-h-[320px] overflow-y-auto no-scrollbar">
+                  {coachTab === 'rewrite' && <>
+                    <div>
+                      <div className="coach-label"><Users className="w-3.5 h-3.5" /> 目標讀者 <span>選填，不會立即改寫</span></div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {AUDIENCE_PRESETS.map((opt) => <button key={opt.id} onClick={() => setSelectedAudience(a => a === opt.id ? null : opt.id)} className={`choice-chip ${selectedAudience === opt.id ? 'active' : ''}`}>{opt.label}</button>)}
                       </div>
-                    ))}
-                  </div>
-                  <button
-                    onClick={applyTone}
-                    disabled={isRewriting}
-                    className="mt-2 w-full text-[11px] font-semibold bg-indigo-500 hover:bg-indigo-600 text-white py-1.5 rounded-lg transition disabled:opacity-50"
-                  >
-                    套用語感
-                  </button>
-                </div>
+                    </div>
+                    <div>
+                      <div className="coach-label"><Sparkles className="w-3.5 h-3.5" /> 快速風格</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {STYLE_PRESETS.map(opt => {
+                          const isActive = toneValues.friendliness === opt.values.friendliness && toneValues.length === opt.values.length && toneValues.energy === opt.values.energy;
+                          return <button key={opt.label} onClick={() => setToneValues(opt.values)} className={`choice-chip ${isActive ? 'active' : ''}`}>{opt.label}</button>;
+                        })}
+                      </div>
+                    </div>
+                    <div className="tone-card">
+                      {TONE_AXES.map((axis) => (
+                        <label key={axis.key} className="tone-row">
+                          <span className="tone-name">{axis.left} ↔ {axis.right}</span>
+                          <input type="range" min={0} max={100} step={5} value={toneValues[axis.key]} onChange={(e) => setToneValues(prev => ({ ...prev, [axis.key]: Number(e.target.value) }))} />
+                          <span className="tone-value">{toneDescription(axis.key, toneValues[axis.key])}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <button onClick={applyTone} disabled={isRewriting} className="coach-primary"><Wand2 className="w-4 h-4" /> 依以上設定改寫全文</button>
+                    <p className="coach-help">
+                      {toneValues.length < 40
+                        ? `精簡模式會刪除次要內容；正文上限 ${toneValues.length < 20 ? '260' : '340'} 字，核心物件資訊仍會保留。`
+                        : '不會新增或改動物件事實；只調整訴求順序、篇幅和語氣。'}
+                    </p>
+                  </>}
 
-                {/* 純潤色 / Hook / Hashtag / 校對 */}
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
-                  <button onClick={handlePolishOnly} disabled={isRewriting} className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50 flex items-center gap-1">
-                    <ShieldCheck className="w-3 h-3 text-emerald-500" /> 純潤色模式
-                  </button>
-                  <button onClick={handleGenerateHooks} disabled={isGeneratingHooks} className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50 flex items-center gap-1">
-                    {isGeneratingHooks ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3 text-amber-500" />} 開場 Hook
-                  </button>
-                  <button onClick={handleSuggestHashtags} disabled={isSuggestingTags} className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50 flex items-center gap-1">
-                    {isSuggestingTags ? <Loader2 className="w-3 h-3 animate-spin" /> : <Hash className="w-3 h-3 text-blue-500" />} 智慧 Hashtag
-                  </button>
-                  <button onClick={handlePrePublishCheck} className="flex-shrink-0 tag-chip text-[11px] py-1 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3 text-violet-500" /> 發文前校對
-                  </button>
-                </div>
+                  {coachTab === 'section' && <>
+                    <div className="coach-label">選擇只要修改的段落</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {SECTION_PRESETS.map(opt => <button key={opt.label} onClick={() => handleRewrite(opt.prompt)} disabled={isRewriting} className="action-card">{opt.label}<small>其餘內容保持不變</small></button>)}
+                    </div>
+                    <button onClick={handleGenerateHooks} disabled={isGeneratingHooks || isRewriting} className="action-card w-full text-left">
+                      <span className="flex items-center gap-2">{isGeneratingHooks ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lightbulb className="w-4 h-4 text-amber-500" />} 產生 5 個開場標題</span><small>選擇後插入文案最前面，不會刪除原文</small>
+                    </button>
+                  </>}
 
-                {/* Hook 選項 */}
+                  {coachTab === 'tools' && <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <button onClick={handlePolishOnly} disabled={isRewriting} className="action-card"><span className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-500" /> 安全潤飾</span><small>只修順暢度，不動事實</small></button>
+                    <button onClick={handleSuggestHashtags} disabled={isSuggestingTags || isRewriting} className="action-card"><span className="flex items-center gap-2">{isSuggestingTags ? <Loader2 className="w-4 h-4 animate-spin" /> : <Hash className="w-4 h-4 text-blue-500" />} 建議 Hashtag</span><small>預覽後逐一加入</small></button>
+                    <button onClick={handlePrePublishCheck} disabled={isRewriting} className="action-card"><span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-violet-500" /> 檢查發文風險</span><small>數字、符號與 emoji</small></button>
+                  </div>}
+
+                  {coachTab === 'language' && <>
+                    <p className="text-xs text-gray-600">翻譯會成為新的編輯版本，可用上方「復原」回到中文版。重要版本建議先儲存。</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => handleTranslate('JA')} disabled={isRewriting} className="action-card text-center">{isTranslating === 'JA' ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : '🇯🇵 日文版'}<small>自然日本房產用語</small></button>
+                      <button onClick={() => handleTranslate('EN')} disabled={isRewriting} className="action-card text-center">{isTranslating === 'EN' ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : '🇬🇧 英文版'}<small>自然國際受眾用語</small></button>
+                    </div>
+                  </>}
+
                 {hookOptions.length > 0 && (
                   <div className="bg-white/70 rounded-xl p-3 border border-white/60 space-y-1.5">
-                    <span className="text-[10px] font-bold text-amber-500 uppercase flex items-center gap-1"><Lightbulb className="w-3 h-3" /> 選一個取代開頭第一行</span>
+                    <span className="text-[10px] font-bold text-amber-500 uppercase flex items-center gap-1"><Lightbulb className="w-3 h-3" /> 選一個插入文案最前面（不會覆蓋原文）</span>
                     {hookOptions.map((h, i) => (
                       <button
                         key={i}
@@ -1008,59 +1150,13 @@ const App = () => {
                     ))}
                   </div>
                 )}
+                </div>
               </div>
             )}
 
             {/* AI Copilot 潤飾區 */}
             {generatedText && (
               <div className="p-4 border-t border-white/60 bg-white/40 flex-shrink-0">
-                <div className="flex items-center gap-2 mb-2 overflow-x-auto no-scrollbar">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase mr-1 flex-shrink-0">AI 微調建議</span>
-                  {REWRITE_PRESETS.map((opt) => (
-                    <button
-                      key={opt.label}
-                      onClick={() => handleRewrite(opt.prompt)}
-                      disabled={isRewriting}
-                      className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase mr-1 flex-shrink-0">多語輸出</span>
-                  <button
-                    onClick={() => handleTranslate('JA')}
-                    disabled={isRewriting}
-                    className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
-                  >
-                    {isTranslating === 'JA' ? <Loader2 className="w-3 h-3 animate-spin" /> : '🇯🇵'} 日文版
-                  </button>
-                  <button
-                    onClick={() => handleTranslate('EN')}
-                    disabled={isRewriting}
-                    className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
-                  >
-                    {isTranslating === 'EN' ? <Loader2 className="w-3 h-3 animate-spin" /> : '🇬🇧'} 英文版
-                  </button>
-                  <span className="flex-shrink-0 text-[10px] text-gray-400">（翻譯前可先「儲存」中文版）</span>
-                </div>
-
-                <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase mr-1 flex-shrink-0">分段重寫</span>
-                  {SECTION_PRESETS.map((opt) => (
-                    <button
-                      key={opt.label}
-                      onClick={() => handleRewrite(opt.prompt)}
-                      disabled={isRewriting}
-                      className="flex-shrink-0 tag-chip text-[11px] py-1 disabled:opacity-50"
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-
                 <div className="relative flex items-end gap-1 bg-white rounded-2xl border border-gray-200 shadow-sm focus-within:border-blue-300 focus-within:ring-2 focus-within:ring-blue-100 transition-all p-1">
                   <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-100 to-purple-100 flex items-center justify-center text-blue-600 ml-1 flex-shrink-0">
                     <Wand2 className="w-4 h-4" />
@@ -1079,7 +1175,7 @@ const App = () => {
                       }
                     }}
                     className="flex-1 bg-transparent border-none outline-none text-[13px] px-3 py-1.5 text-gray-800 resize-none overflow-y-auto leading-relaxed no-scrollbar"
-                    placeholder="讓 AI 幫你修改... (例如：加上適合養貓的描述)。Enter 送出、Shift+Enter 換行"
+                    placeholder="自訂修改，例如：把第二段縮短（請勿要求加入原始資料沒有的資訊）"
                   />
                   <button
                     onClick={() => handleRewrite(customRewritePrompt)}
